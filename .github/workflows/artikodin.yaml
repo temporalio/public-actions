@@ -2,8 +2,11 @@ name: Artikodin pull-request handler
 
 
 on:
-  # Runs on a pull request for the main branch
-  pull_request:
+  # Runs on a pull request for the main branch (we use
+  # 'pull_request_target' instead of 'pull_request' so
+  # it also works for forks, since the secrets would
+  # otherwise not be available for forks.
+  pull_request_target:
     types:
       # Default events
       - opened
