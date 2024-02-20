@@ -19,6 +19,13 @@ on:
     branch:
       - main
 
+  # This does not work on forks, we are duplicating
+  # the 'closed' call here because it does not seem
+  # to behave as expected for `pull_request_target`.
+  pull_request:
+    types:
+      - closed
+
   # Runs on a merge group build
   merge_group:
     types:
