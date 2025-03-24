@@ -1,0 +1,53 @@
+Update Dependencies GitHub Action
+
+name: Update Action Dependencies
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every Sunday
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+    # Allows manual triggering
+
+jobs:
+  update-dependencies:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install octokit
+        run: npm install @octokit/action
+
+      # Node.js script can be anywhere. A good convention is to put local GitHub Actions
+      # into the `.github/actions` folder
+      - name: Update action dependencies
+        id: update
+        run: |
+          node .github/actions/update-dependencies.js
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: pin dependent actions to latest stable tags' SHA"
+          title: "⬆️ Update dependent actions to latest stable tags"
+          body: |
+            This PR was automatically generated to update all dependent GitHub Actions to use the commit SHA of their latest stable tag.
+            
+            This helps ensure security and reliability by pinning to specific commit SHAs rather than tags or branch names.
+          branch: update-actions-pins
+          delete-branch: true
+          labels: |
+            dependencies
+            automated
