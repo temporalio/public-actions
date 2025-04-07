@@ -15,15 +15,14 @@ on:
       # exception request pull request is getting
       # closed if any was open
       - closed
-    branch:
+    branches:
       - main
       - master
-
   # Runs on a merge group build
   merge_group:
-    types:
-      - checks_requested
 
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
