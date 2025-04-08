@@ -40,4 +40,5 @@ jobs:
         with:
           sparse-checkout: |
             CODEOWNERS
+            .github/CODEOWNERS
           sparse-checkout-cone-mode: false
