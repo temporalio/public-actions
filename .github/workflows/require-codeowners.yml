@@ -1,0 +1,44 @@
+name: Check for CODEOWNERS
+
+on:
+  # Runs on a pull request for the main branch (we use
+  # 'pull_request_target' instead of 'pull_request' so
+  # it also works for forks, since the secrets would
+  # otherwise not be available for forks.
+  pull_request_target:
+    types:
+      # Default events
+      - opened
+      - synchronize
+      - reopened
+      # But we also want to make sure a potential
+      # exception request pull request is getting
+      # closed if any was open
+      - closed
+    branches:
+      - main
+      - master
+  # Runs on a merge group build
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check for CODEOWNERS
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CODEOWNERS
+            .github/CODEOWNERS
+          sparse-checkout-cone-mode: false
