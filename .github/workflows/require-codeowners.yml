@@ -4,7 +4,7 @@ on:
   # Runs on a pull request for the main branch (we use
   # 'pull_request_target' instead of 'pull_request' so
   # it also works for forks, since the secrets would
-  # otherwise not be available for forks.
+  # otherwise not be available for forks).
   pull_request_target:
     types:
       # Default events
@@ -37,8 +37,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            CODEOWNERS
-            .github/CODEOWNERS
-          sparse-checkout-cone-mode: false
+
+      # Find doesn't return non-0 for no results, but grep does.
+      - name: Check for CODEOWNERS
+        run: |
+          find . -iname "CODEOWNERS" | grep .
+        
