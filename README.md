@@ -1,0 +1,1 @@
+A repository containing actions that we want to run on [public repos](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#using-a-workflow-file).
