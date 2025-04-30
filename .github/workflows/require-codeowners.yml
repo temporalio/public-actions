@@ -37,6 +37,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       # Find doesn't return non-0 for no results, but grep does.
       - name: Check for CODEOWNERS
