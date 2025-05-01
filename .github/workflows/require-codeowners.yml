@@ -35,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
 
       # Find doesn't return non-0 for no results, but grep does.
       - name: Check for CODEOWNERS
