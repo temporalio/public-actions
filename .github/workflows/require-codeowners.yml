@@ -32,7 +32,7 @@ jobs:
   check:
     name: Check for CODEOWNERS
     runs-on: ubuntu-latest
-    if: ${{ !endsWith(github.actor, '[bot]') }}
+    if: github.event.pull_request.draft == false && ${{ !endsWith(github.actor, '[bot]') }}
 
     steps:
       - name: Checkout branch
