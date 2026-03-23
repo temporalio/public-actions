@@ -32,11 +32,11 @@ jobs:
   check:
     name: Check for CODEOWNERS
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false && ${{ !endsWith(github.actor, '[bot]') }}
+    if: ${{ github.event.pull_request.draft == false && !endsWith(github.actor, '[bot]') }}
 
     steps:
       - name: Checkout branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
