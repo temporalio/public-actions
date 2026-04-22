@@ -1,0 +1,87 @@
+name: 'govulncheck'
+description: 'Differential govulncheck analysis — scans the current branch and optionally compares against a base branch, failing only on newly introduced vulnerabilities'
+inputs:
+  govulncheck-version:
+    description: 'Version of govulncheck to use'
+    required: false
+    default: 'v1.1.4'
+  base-sha:
+    description: >-
+      Base branch SHA for differential comparison. Automatically detected on
+      pull_request and merge_group events. When empty (e.g., on push), all
+      findings are treated as new. Override to compare against a specific commit.
+    required: false
+    default: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+outputs:
+  new-count:
+    description: 'Number of newly introduced vulnerabilities'
+    value: ${{ steps.report.outputs.new-count }}
+  has-new-vulns:
+    description: 'Whether new vulnerabilities were found (true/false)'
+    value: ${{ steps.report.outputs.has-new-vulns }}
+runs:
+  using: "composite"
+  steps:
+    - name: Install govulncheck
+      shell: bash
+      env:
+        GOVULNCHECK_VERSION: ${{ inputs.govulncheck-version }}
+        # Override GOTOOLCHAIN so Go can fetch the toolchain govulncheck needs,
+        # even if the project's go.mod pins an older Go version.
+        GOTOOLCHAIN: auto
+      run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+
+    - name: Scan current branch
+      shell: bash
+      run: |
+        set +e
+        govulncheck -json ./... > "${RUNNER_TEMP}/pr-vulns.json" 2>"${RUNNER_TEMP}/pr-vulns.stderr"
+        exit_code=$?
+        set -e
+        # Exit code 3 = vulnerabilities found (expected). Anything else is a real error.
+        if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 3 ]; then
+          if [ -s "${RUNNER_TEMP}/pr-vulns.stderr" ]; then
+            echo "::group::govulncheck stderr (current branch)"
+            cat "${RUNNER_TEMP}/pr-vulns.stderr"
+            echo "::endgroup::"
+          fi
+          exit "$exit_code"
+        fi
+
+    - name: Scan base branch
+      if: ${{ inputs.base-sha != '' }}
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.base-sha }}
+      run: |
+        # Best-effort: failure here should not block the report.
+        # Composite actions don't support continue-on-error, so we handle it inline.
+        HEAD_SHA=$(git rev-parse HEAD)
+        # --force: the base branch checkout may leave go.mod/go.sum in a modified state.
+        restore_head() { git checkout --force --quiet "$HEAD_SHA" 2>/dev/null || true; }
+        trap restore_head EXIT
+
+        if git fetch --depth=1 origin "$BASE_SHA" && git checkout --quiet "$BASE_SHA"; then
+          set +e
+          govulncheck -json ./... > "${RUNNER_TEMP}/base-vulns.json" 2>"${RUNNER_TEMP}/base-vulns.stderr"
+          scan_exit=$?
+          set -e
+          if [ "$scan_exit" -ne 0 ] && [ "$scan_exit" -ne 3 ] && [ -s "${RUNNER_TEMP}/base-vulns.stderr" ]; then
+            echo "::group::govulncheck stderr (base branch)"
+            cat "${RUNNER_TEMP}/base-vulns.stderr"
+            echo "::endgroup::"
+          fi
+        else
+          echo "::warning::Failed to checkout base branch — differential comparison will treat all findings as new"
+        fi
+
+        # restore_head runs via the EXIT trap. Always exit 0 — this step is best-effort.
+        exit 0
+
+    - name: Compare and report
+      id: report
+      shell: bash
+      run: |
+        # Ensure base scan file exists even if the base scan step was skipped or failed.
+        touch "${RUNNER_TEMP}/base-vulns.json"
+        "$GITHUB_ACTION_PATH/scripts/govulncheck-report.sh" "${RUNNER_TEMP}/pr-vulns.json" "${RUNNER_TEMP}/base-vulns.json"
