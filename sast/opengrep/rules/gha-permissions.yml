@@ -1,0 +1,29 @@
+rules:
+  - id: security.gha.missing-explicit-permissions-temporal
+    languages:
+      - yaml
+    severity: ERROR
+    message: >
+      No explicit `GITHUB_TOKEN` permissions found at the workflow or job level.
+      Add a `permissions:` block at the workflow root (applies to all jobs) or
+      per job with least privilege (e.g., `contents: read` and only specific
+      writes like `pull-requests: write` if needed).
+    patterns:
+      - pattern-inside: |
+          jobs:
+            ...
+      - pattern-inside: |-
+          runs-on: ...
+          ...
+      - pattern-not-inside: |
+          ...
+          permissions:
+            $ACTIONS: ...
+          ...
+      - pattern-not-inside: |
+          ...
+          permissions: ...
+          ...
+    paths:
+      include:
+        - .github/workflows/**

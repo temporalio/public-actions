@@ -1,0 +1,26 @@
+rules:
+  - id: security.gha.deprecated.tibdex-github-app-token
+    message: >
+      Deprecated action `tibdex/github-app-token` detected. Replace with
+      `actions/create-github-app-token` (first-party).
+    severity: WARNING
+    languages:
+      - yaml
+    paths:
+      include:
+        - .github/workflows/**
+        - "**/action.yml"
+        - "**/action.yaml"
+    patterns:
+      - pattern: |
+          uses: $ACTION
+      - metavariable-regex:
+          metavariable: $ACTION
+          regex: ^tibdex/github-app-token(@.*)?$
+    fix: |
+      uses: actions/create-github-app-token@v2
+    metadata:
+      category: security
+      references:
+        - https://github.com/tibdex/github-app-token
+        - https://github.com/actions/create-github-app-token

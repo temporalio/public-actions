@@ -1,0 +1,199 @@
+name: 'opengrep'
+description: >-
+  Differential SAST with Opengrep — scans for new findings on PRs,
+  generates Job Summary with annotations.
+
+inputs:
+  version:
+    description: 'Opengrep version to install'
+    required: false
+    default: 'v1.21.0'
+  baseline-sha:
+    description: >-
+      Base SHA for differential scanning. Auto-detected on pull_request
+      and merge_group events. When empty, all findings are treated as new.
+    required: false
+    default: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+  config:
+    description: >-
+      Additional rule config (path or opengrep registry ref).
+      Built-in Temporal rules always run.
+    required: false
+    default: ''
+
+outputs:
+  new-count:
+    description: 'Number of new findings'
+    value: ${{ steps.report.outputs.new-count }}
+  has-new-findings:
+    description: 'Whether new findings were found (true/false)'
+    value: ${{ steps.report.outputs.has-new-findings }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@3454372f43399081ed03b604cb2d021dabca52bb # v3.8.2
+
+    - name: Install opengrep
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        INSTALL_DIR="${RUNNER_TEMP}/opengrep-install"
+        mkdir -p "$INSTALL_DIR"
+
+        # Release assets are standalone binaries, not tarballs.
+        # See: https://github.com/opengrep/opengrep/releases
+        ASSET_NAME="opengrep_manylinux_x86"
+        RELEASE_URL="https://github.com/opengrep/opengrep/releases/download/${VERSION}"
+
+        echo "::group::Install opengrep ${VERSION}"
+        trap 'echo "::endgroup::"' EXIT
+
+        curl -fsSL "${RELEASE_URL}/${ASSET_NAME}" -o "${INSTALL_DIR}/opengrep"
+
+        # Download Sigstore artifacts (best-effort — may not exist for all releases).
+        curl -fsSL "${RELEASE_URL}/${ASSET_NAME}.sig"  -o "${INSTALL_DIR}/opengrep.sig"  2>/dev/null || true
+        curl -fsSL "${RELEASE_URL}/${ASSET_NAME}.cert" -o "${INSTALL_DIR}/opengrep.cert" 2>/dev/null || true
+
+        # Sigstore verification: fail if cosign is present and signatures exist but
+        # verification fails. Warn (don't fail) if cosign or signatures are missing.
+        if command -v cosign &>/dev/null; then
+          if [ -s "${INSTALL_DIR}/opengrep.sig" ] && [ -s "${INSTALL_DIR}/opengrep.cert" ]; then
+            cosign verify-blob \
+              --certificate "${INSTALL_DIR}/opengrep.cert" \
+              --signature "${INSTALL_DIR}/opengrep.sig" \
+              --certificate-identity-regexp "https://github.com/opengrep/opengrep/" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${INSTALL_DIR}/opengrep"
+            echo "Sigstore verification: passed"
+          else
+            echo "::warning::Sigstore artifacts not found for ${VERSION} — skipping binary verification"
+          fi
+        else
+          echo "::warning::cosign not found — skipping Sigstore binary verification"
+        fi
+
+        chmod +x "${INSTALL_DIR}/opengrep"
+        echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
+
+    - name: Fetch baseline
+      if: ${{ inputs.baseline-sha != '' }}
+      id: baseline
+      shell: bash
+      env:
+        BASE_SHA: ${{ inputs.baseline-sha }}
+      run: |
+        # Fetch the base commit into the object store.
+        if ! git fetch --depth=1 origin "$BASE_SHA" 2>/dev/null; then
+          echo "::warning::Failed to fetch baseline commit ${BASE_SHA} — all findings will be treated as new"
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # --baseline-commit uses git diff --merge-base which requires the
+        # merge base to be reachable. A shallow clone (depth 1) hides the
+        # commit's parents, so deepen by 1 to expose them.
+        git fetch --deepen=1 origin 2>/dev/null || true
+
+        echo "available=true" >> "$GITHUB_OUTPUT"
+
+    - name: Differential scan
+      shell: bash
+      env:
+        BASELINE_SHA: ${{ steps.baseline.outputs.available == 'true' && inputs.baseline-sha || '' }}
+        ADDITIONAL_CONFIG: ${{ inputs.config }}
+      run: |
+        SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
+        if [ -n "$ADDITIONAL_CONFIG" ]; then
+          SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
+        fi
+        SCAN_ARGS+=(--json --error)
+        if [ -n "$BASELINE_SHA" ]; then
+          SCAN_ARGS+=(--baseline-commit "$BASELINE_SHA")
+        fi
+        SCAN_ARGS+=(.)
+
+        set +e
+        opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/new-findings.json" 2>"${RUNNER_TEMP}/diff-scan.stderr"
+        exit_code=$?
+        set -e
+
+        # 0 = no new findings, 1 = new findings (with --error), 2+ = scan error.
+        case $exit_code in
+          0|1) ;;
+          *)
+            # --baseline-commit can fail in shallow clones. Fall back to a
+            # non-differential scan so the check still runs (all findings = new).
+            if [ -n "$BASELINE_SHA" ]; then
+              echo "::warning::Differential scan failed (exit ${exit_code}) — retrying without --baseline-commit (all findings will be treated as new)"
+              if [ -s "${RUNNER_TEMP}/diff-scan.stderr" ]; then
+                echo "::group::opengrep scan stderr (differential)"
+                cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
+                echo "::endgroup::"
+              fi
+
+              SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
+              if [ -n "$ADDITIONAL_CONFIG" ]; then
+                SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
+              fi
+              SCAN_ARGS+=(--json --error .)
+
+              set +e
+              opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/new-findings.json" 2>"${RUNNER_TEMP}/diff-scan.stderr"
+              exit_code=$?
+              set -e
+
+              case $exit_code in
+                0|1) ;;
+                *)
+                  echo "::group::opengrep scan stderr"
+                  cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
+                  echo "::endgroup::"
+                  exit "$exit_code"
+                  ;;
+              esac
+            else
+              echo "::group::opengrep scan stderr"
+              cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
+              echo "::endgroup::"
+              exit "$exit_code"
+            fi
+            ;;
+        esac
+
+    - name: Full scan
+      shell: bash
+      env:
+        ADDITIONAL_CONFIG: ${{ inputs.config }}
+      run: |
+        SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
+        if [ -n "$ADDITIONAL_CONFIG" ]; then
+          SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
+        fi
+        SCAN_ARGS+=(--json .)
+
+        set +e
+        opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/all-findings.json" 2>"${RUNNER_TEMP}/full-scan.stderr"
+        exit_code=$?
+        set -e
+
+        # Informational only — warn on errors but don't fail the step.
+        if [ "$exit_code" -ne 0 ]; then
+          echo "::warning::Full scan failed (exit ${exit_code}) — total findings summary may be incomplete"
+          echo '{"results":[],"errors":[],"paths":{"scanned":[]}}' > "${RUNNER_TEMP}/all-findings.json"
+        fi
+
+    - name: Report
+      id: report
+      shell: bash
+      run: |
+        # Ensure files exist even if prior steps were skipped.
+        touch "${RUNNER_TEMP}/new-findings.json"
+        touch "${RUNNER_TEMP}/all-findings.json"
+        "$GITHUB_ACTION_PATH/scripts/opengrep-report.sh" \
+          "${RUNNER_TEMP}/new-findings.json" \
+          "${RUNNER_TEMP}/all-findings.json"

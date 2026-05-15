@@ -1,0 +1,18 @@
+name: Opengrep SAST
+
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+# Do NOT use cancel-in-progress — it breaks required workflow checks.
+
+jobs:
+  scan:
+    name: opengrep/scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: temporalio/public-actions/sast/opengrep@main
