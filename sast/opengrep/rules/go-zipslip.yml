@@ -1,0 +1,95 @@
+rules:
+  - id: security.go-zipslip-archive-path-traversal
+    message: >-
+      Potential ZIP Slip path traversal vulnerability. The archive entry name
+      is used with `filepath.Join` to construct a file path without validating
+      that the result stays within the destination directory. A malicious
+      archive with entries like `../../etc/crontab` can write files outside the
+      extraction directory. Note that string-based mitigations like
+      `strings.HasPrefix` and `filepath.IsLocal` defend against `..` traversal
+      but do NOT prevent symlink-based archive attacks or TOCTOU races. Use
+      `os.OpenRoot` / `os.Root` (Go 1.24+) for complete protection.
+    severity: WARNING
+    languages:
+      - go
+    metadata:
+      cwe:
+        - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+          ('Path Traversal')"
+      owasp:
+        - A01:2021 - Broken Access Control
+      references:
+        - https://go.dev/blog/osroot
+        - https://snyk.io/research/zip-slip-vulnerability
+        - https://github.com/golang/go/issues/40373
+      category: security
+      technology:
+        - go
+      confidence: HIGH
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              for ..., $F := range $READER.File {
+                ...
+              }
+          - pattern-either:
+              - pattern: $PATH = filepath.Join(..., $F.Name, ...)
+              - pattern: $PATH = path.Join(..., $F.Name, ...)
+          - focus-metavariable: $PATH
+          - pattern-not-inside: |
+              for ..., $F := range $READER.File {
+                ...
+                if <... strings.HasPrefix($PATH, ...) ...> {
+                  ...
+                }
+                ...
+              }
+          - pattern-not-inside: |
+              for ..., $F := range $READER.File {
+                ...
+                if <... strings.Contains($F.Name, "..") ...> {
+                  ...
+                }
+                ...
+              }
+          - pattern-not-inside: |
+              for ..., $F := range $READER.File {
+                ...
+                if <... filepath.IsLocal($F.Name) ...> {
+                  ...
+                }
+                ...
+              }
+      - patterns:
+          - pattern-inside: |
+              func $FUNC(..., $F *zip.File, ...) {
+                ...
+              }
+          - pattern-either:
+              - pattern: $PATH = filepath.Join(..., $F.Name, ...)
+              - pattern: $PATH = path.Join(..., $F.Name, ...)
+          - focus-metavariable: $PATH
+          - pattern-not-inside: |
+              func $FUNC(..., $F *zip.File, ...) {
+                ...
+                if <... strings.HasPrefix($PATH, ...) ...> {
+                  ...
+                }
+                ...
+              }
+          - pattern-not-inside: |
+              func $FUNC(..., $F *zip.File, ...) {
+                ...
+                if <... strings.Contains($F.Name, "..") ...> {
+                  ...
+                }
+                ...
+              }
+          - pattern-not-inside: |
+              func $FUNC(..., $F *zip.File, ...) {
+                ...
+                if <... filepath.IsLocal($F.Name) ...> {
+                  ...
+                }
+                ...
+              }
