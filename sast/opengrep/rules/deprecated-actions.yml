@@ -20,6 +20,7 @@ rules:
     fix: |
       uses: actions/create-github-app-token@v2
     metadata:
+      source: sast/opengrep/rules/deprecated-actions.yml
       category: security
       references:
         - https://github.com/tibdex/github-app-token

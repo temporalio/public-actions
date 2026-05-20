@@ -8,6 +8,8 @@ rules:
       Add a `permissions:` block at the workflow root (applies to all jobs) or
       per job with least privilege (e.g., `contents: read` and only specific
       writes like `pull-requests: write` if needed).
+    metadata:
+      source: sast/opengrep/rules/gha-permissions.yml
     patterns:
       - pattern-inside: |
           jobs:

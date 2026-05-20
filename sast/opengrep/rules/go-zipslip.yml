@@ -13,6 +13,7 @@ rules:
     languages:
       - go
     metadata:
+      source: sast/opengrep/rules/go-zipslip.yml
       cwe:
         - "CWE-22: Improper Limitation of a Pathname to a Restricted Directory
           ('Path Traversal')"
