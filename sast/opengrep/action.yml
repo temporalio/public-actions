@@ -20,6 +20,12 @@ inputs:
       Built-in Temporal rules always run.
     required: false
     default: ''
+  pr-comments:
+    description: >-
+      Post findings as inline PR review comments (requires
+      pull-requests: write permission). Only applies on pull_request events.
+    required: false
+    default: 'false'
 
 outputs:
   new-count:
@@ -190,6 +196,11 @@ runs:
     - name: Report
       id: report
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_COMMENTS_ENABLED: ${{ inputs.pr-comments }}
       run: |
         # Ensure files exist even if prior steps were skipped.
         touch "${RUNNER_TEMP}/new-findings.json"
