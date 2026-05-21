@@ -6,7 +6,7 @@ Differential SAST with [Opengrep](https://opengrep.dev) for pull requests. Scans
 
 ```yaml
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
   - uses: temporalio/public-actions/sast/opengrep@main
 ```
 
@@ -56,7 +56,7 @@ permissions:
   pull-requests: write
 
 steps:
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
   - uses: temporalio/public-actions/sast/opengrep@main
     with:
       pr-comments: 'true'
