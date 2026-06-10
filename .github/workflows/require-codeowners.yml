@@ -32,9 +32,13 @@ jobs:
   check:
     name: Check for CODEOWNERS
     runs-on: ubuntu-latest
-    if: ${{ github.event.pull_request.draft == false && !endsWith(github.actor, '[bot]') }}
+    if: ${{ github.event.pull_request.draft == false }}
 
     steps:
+      - name: Welcome your new overlords
+        if: ${{ endsWith(github.actor, '[bot]') }}
+        run: echo "Robots get a pass" >> "$GITHUB_OUTPUT"; exit 0
+          
       - name: Checkout branch
         uses: actions/checkout@v6
         with:
