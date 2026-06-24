@@ -49,6 +49,11 @@ class RuleResult:
 def pick_engine() -> str:
     """Pick the test engine: $OPENGREP_TEST_BIN, else opengrep, else semgrep."""
     if override := os.environ.get("OPENGREP_TEST_BIN"):
+        # Validate the override now so a typo fails clearly here instead of as a
+        # FileNotFoundError from the first subprocess.run. shutil.which accepts a
+        # bare command name or an explicit path.
+        if not shutil.which(override):
+            sys.exit(f"error: OPENGREP_TEST_BIN={override!r} not found on PATH")
         return override
     for candidate in ("opengrep", "semgrep"):
         if shutil.which(candidate):
@@ -63,11 +68,18 @@ def rule_files() -> list[Path]:
 
 
 def fixture_index() -> dict[str, Path]:
-    """Map each fixture's filename stem to its path (one pass over tests/)."""
+    """Map each fixture's filename stem to its path (one pass over tests/).
+
+    Pairing is by stem, so two fixtures sharing a stem would be ambiguous and
+    could silently mis-pair a rule. Fail loudly instead of guessing.
+    """
     index: dict[str, Path] = {}
     for path in sorted(TESTS_DIR.rglob("*")):
         if path.is_file() and path.name != "run.py" and path.name.lower() != "readme.md":
-            index.setdefault(path.stem, path)  # stems are unique by convention
+            if path.stem in index:
+                sys.exit(f"error: duplicate fixture stem '{path.stem}': "
+                         f"{rel(index[path.stem])} and {rel(path)} — stems must be unique")
+            index[path.stem] = path
     return index
 
 
