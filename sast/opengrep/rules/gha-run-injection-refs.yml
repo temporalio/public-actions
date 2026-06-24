@@ -1,0 +1,44 @@
+rules:
+  - id: security.gha.run-shell-injection-refs
+    languages:
+      - yaml
+    severity: WARNING
+    message: >
+      A Git ref (branch/tag name) that is not fork-controlled is interpolated
+      directly into this `run`/`script` block — `github.ref`, `github.base_ref`,
+      `github.ref_name`, `pull_request.base.ref`, or a repository
+      `default_branch`. Setting these requires write access to the repository,
+      so a fork pull request cannot control them and this is not externally
+      exploitable. But Git ref names may contain shell
+      metacharacters (`$`, `;`, backticks, `|`, `(`, `)`), so route the value
+      through a step-level `env:` entry (e.g. `REF: ${{ github.base_ref }}`) and
+      reference the quoted environment variable instead (`echo "$REF"`) as
+      defense-in-depth. The fork-controlled refs (`github.head_ref`,
+      `pull_request.head.ref`) are the externally-exploitable case and are
+      reported at ERROR severity by `security.gha.run-shell-injection`.
+    paths:
+      include:
+        - .github/workflows/**
+        - "**/action.yml"
+        - "**/action.yaml"
+    patterns:
+      - pattern-either:
+          - pattern: "run: $CMD"
+          - pattern: "script: $CMD"
+      - metavariable-regex:
+          metavariable: $CMD
+          # Matches both dot and bracket property access: `.x`, `['x']`, `["x"]`.
+          regex: (?si).*\bgithub(?:\.ref\b|\[['"]ref['"]\]|\.ref_name\b|\[['"]ref_name['"]\]|\.base_ref\b|\[['"]base_ref['"]\]|(?:\.event\b|\[['"]event['"]\])[\w.\[\]'"*-]*\.base\.ref\b|(?:\.event\b|\[['"]event['"]\])[\w.\[\]'"*-]*[.'"]default_branch\b)
+    metadata:
+      source: sast/opengrep/rules/gha-run-injection-refs.yml
+      category: security
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      owasp:
+        - A03:2021 - Injection
+      technology:
+        - github-actions
+      confidence: LOW
+      references:
+        - https://docs.github.com/en/actions/concepts/security/script-injections
+        - https://securitylab.github.com/resources/github-actions-untrusted-input/

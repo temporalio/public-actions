@@ -1,0 +1,39 @@
+# Regression fixture for `security.gha.run-shell-injection-refs` (WARNING, advisory).
+# Annotation syntax (ruleid / ok) is documented in sast/opengrep/tests/README.md.
+#
+# Non-fork-controlled refs (need write access to set) but metacharacter-capable,
+# so flagged as defense-in-depth. Fork-controlled refs (head_ref, head.ref) are
+# the ERROR rule's job and must NOT fire here.
+on: [push, pull_request]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      # --- must flag (non-fork refs in run/script) ---
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.ref }}
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.base_ref }}
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.ref_name }}
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: git fetch origin "${{ github.event.pull_request.base.ref }}"
+      # bracket property access
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: echo ${{ github['base_ref'] }}
+      # base-repo default branch: a branch name, write-gated -> advisory
+      # ruleid: security.gha.run-shell-injection-refs
+      - run: ct lint --target-branch ${{ github.event.repository.default_branch }}
+
+      # --- must NOT flag ---
+      # fork-controlled refs belong to security.gha.run-shell-injection (ERROR), not here
+      # ok: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.head_ref }}
+      # ok: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.event.pull_request.head.ref }}
+      # ok: security.gha.run-shell-injection-refs
+      - run: echo ${{ github.sha }}
+      # ok: security.gha.run-shell-injection-refs
+      - run: echo "$REF"
+        env:
+          REF: ${{ github.base_ref }}

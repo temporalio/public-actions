@@ -1,0 +1,45 @@
+name: Opengrep rule tests
+
+# Regression tests for the custom Opengrep rules in sast/opengrep/rules.
+# Each rule is run with `opengrep --test` against its annotated fixture in
+# sast/opengrep/tests. See sast/opengrep/tests/README.md.
+
+on:
+  pull_request:
+    paths:
+      - 'sast/opengrep/rules/**'
+      - 'sast/opengrep/tests/**'
+      - '.github/workflows/test-opengrep-rules.yml'
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  rule-tests:
+    name: opengrep/rule-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install opengrep
+        shell: bash
+        env:
+          VERSION: v1.21.0
+          # SHA-256 of opengrep_manylinux_x86 for VERSION. Pins the bytes so a
+          # swapped/re-uploaded release asset fails the job. Bump together with
+          # VERSION (recompute: curl -fsSL <asset-url> | sha256sum).
+          OPENGREP_SHA256: 9ed0ceee4a3a406d27d40894bcce85ea151be21e6d4b180689689224faff2a3e
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/opengrep"
+          mkdir -p "$dir"
+          curl -fsSL \
+            "https://github.com/opengrep/opengrep/releases/download/${VERSION}/opengrep_manylinux_x86" \
+            -o "$dir/opengrep"
+          echo "${OPENGREP_SHA256}  ${dir}/opengrep" | sha256sum -c -
+          chmod +x "$dir/opengrep"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Run rule regression tests
+        run: python3 sast/opengrep/tests/run.py

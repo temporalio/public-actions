@@ -1,0 +1,9 @@
+# Rule regression-test fixtures contain intentional vulnerabilities so the
+# Opengrep rules can be tested against them. Exclude them from real scans
+# (this repo's own Opengrep/Semgrep self-scans) so they don't report findings.
+# `opengrep --test` targets these files explicitly and is unaffected by this.
+#
+# NOTE: the filename must be `.semgrepignore`. Opengrep has no `.opengrepignore`
+# — it honors `.semgrepignore` (inherited from semgrep); a `.opengrepignore`
+# file is silently ignored (verified against opengrep v1.21.0). Do not rename.
+sast/opengrep/tests/
