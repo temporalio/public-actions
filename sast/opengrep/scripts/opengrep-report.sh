@@ -3,16 +3,22 @@
 # with ::error:: annotations for new findings.
 #
 # Usage:
-#   opengrep-report.sh <new-findings.json> <all-findings.json>
+#   opengrep-report.sh <baseline-findings.json> <head-findings.json>
+#
+# "New" findings are computed here as the head full scan minus the baseline
+# full scan, keyed by stable identity (see compute_new_findings) — NOT by
+# opengrep's --baseline-commit, whose location/content fingerprint re-reports
+# pre-existing whole-file findings as new whenever the file is edited.
 #
 # Environment variables (set automatically by GitHub Actions):
 #   GITHUB_STEP_SUMMARY — path to the job summary file (falls back to stdout)
 #   GITHUB_OUTPUT       — path to expose step outputs
 #
 # Local testing:
-#   opengrep scan --config rules/ --json --error . > /tmp/new.json 2>/dev/null; true
-#   opengrep scan --config rules/ --json . > /tmp/all.json
-#   ./opengrep-report.sh /tmp/new.json /tmp/all.json
+#   opengrep scan --config rules/ --json . > /tmp/head.json
+#   git worktree add --detach /tmp/base <base-sha>
+#   ( cd /tmp/base && opengrep scan --config rules/ --json . ) > /tmp/baseline.json
+#   ./opengrep-report.sh /tmp/baseline.json /tmp/head.json
 #
 # Expected Opengrep JSON format (same as Semgrep):
 #   {
@@ -57,6 +63,77 @@ count_scanned() {
     return
   fi
   jq '.paths.scanned | length' "$json_file" 2>/dev/null || echo 0
+}
+
+# jq program: head findings minus baseline findings.
+#
+# Identity is the STABLE key (check_id, path) plus a per-key COUNT — never the
+# line number or the matched text. Both of those shift when an unrelated line
+# *inside* a whole-block "absence" match (e.g. the missing-permissions rule,
+# which matches a whole job) is edited, which is exactly why opengrep's
+# --baseline-commit re-reported pre-existing findings as new on PRs that only
+# touched the file (SEC-1975).
+#
+# Per key, new count = max(0, head_count - baseline_count):
+#   - edit inside a pre-existing match -> count unchanged -> 0 new (no noise)
+#   - a genuinely new gap (new job/file/line) -> count rises -> still reported
+# When a key gained findings, the head findings least like the baseline
+# (content- and start-line-novel) are surfaced first, then capped at the delta,
+# so the annotation points at the genuinely new finding rather than an edited
+# pre-existing one.
+NEW_FINDINGS_JQ='
+($base[0].results // []) as $br
+| (.results // []) as $hr
+| ( $br
+    | group_by([.check_id, .path])
+    | map({ k: ([.[0].check_id, .[0].path] | @json),
+            n: length,
+            sigs: [.[].extra.lines],
+            lines: [.[].start.line] })
+    | map({ (.k): . }) | add // {} ) as $bmap
+| [ $hr
+    | group_by([.check_id, .path])[]
+    | ([.[0].check_id, .[0].path] | @json) as $k
+    | ($bmap[$k].n // 0) as $bn
+    | ($bmap[$k].sigs // []) as $bsigs
+    | ($bmap[$k].lines // []) as $blines
+    | ((length - $bn) | if . < 0 then 0 else . end) as $delta
+    | ( map(. + { _novel:
+            ( (if ([.extra.lines] - $bsigs) | length > 0 then 1 else 0 end)
+            + (if ([.start.line] - $blines) | length > 0 then 1 else 0 end) ) })
+        | sort_by(-._novel)
+        | .[0:$delta]
+        | map(del(._novel)) ) ]
+| add // []
+| { results: ., errors: [], paths: {} }
+'
+
+# compute_new_findings <baseline-json> <head-json> <out-json>
+# Write the new-findings JSON (a subset of the head results, preserved verbatim)
+# to <out-json>. A missing/empty baseline or a diff failure conservatively
+# treats every head finding as new, so a baseline problem never hides a finding.
+compute_new_findings() {
+  local baseline_json=$1 head_json=$2 out_json=$3
+
+  if [ ! -s "$head_json" ]; then
+    printf '%s\n' '{"results":[],"errors":[],"paths":{}}' > "$out_json"
+    return
+  fi
+
+  local base_json=$baseline_json cleanup=""
+  if [ ! -s "$baseline_json" ]; then
+    base_json=$(mktemp)
+    cleanup=$base_json
+    printf '%s\n' '{"results":[]}' > "$base_json"
+  fi
+
+  if ! jq --slurpfile base "$base_json" "$NEW_FINDINGS_JQ" "$head_json" \
+      > "$out_json" 2>/dev/null; then
+    cp "$head_json" "$out_json"
+  fi
+
+  [ -n "$cleanup" ] && rm -f "$cleanup"
+  return 0
 }
 
 # Emit ::error:: annotations for each finding (visible on PR diff).
@@ -465,18 +542,23 @@ write_summary() {
 # ---------------------------------------------------------------------------
 
 main() {
-  local new_json="${1:?Usage: opengrep-report.sh <new-findings.json> <all-findings.json>}"
-  local all_json="${2:?Usage: opengrep-report.sh <new-findings.json> <all-findings.json>}"
+  local baseline_json="${1:?Usage: opengrep-report.sh <baseline-findings.json> <head-findings.json>}"
+  local head_json="${2:?Usage: opengrep-report.sh <baseline-findings.json> <head-findings.json>}"
 
   if ! command -v jq &>/dev/null; then
     echo "::error::jq is required but not installed — use a GitHub-hosted runner or install jq"
     exit 1
   fi
 
+  # New findings = head full scan minus baseline full scan, by stable identity.
+  local new_json
+  new_json=$(mktemp)
+  compute_new_findings "$baseline_json" "$head_json" "$new_json"
+
   local new_count all_count scanned_count
   new_count=$(count_findings "$new_json")
-  all_count=$(count_findings "$all_json")
-  scanned_count=$(count_scanned "$all_json")
+  all_count=$(count_findings "$head_json")
+  scanned_count=$(count_scanned "$head_json")
 
   # Emit ::error:: annotations for new findings (visible on PR diff).
   if [ "$new_count" -gt 0 ]; then
@@ -484,7 +566,7 @@ main() {
   fi
 
   # Write GitHub job summary.
-  write_summary "$new_json" "$all_json" "$new_count" "$all_count" "$scanned_count"
+  write_summary "$new_json" "$head_json" "$new_count" "$all_count" "$scanned_count"
 
   # Post inline PR review comments for new findings (best-effort — never
   # blocks outputs or the exit code, which are the authoritative signals).

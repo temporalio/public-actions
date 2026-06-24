@@ -1,0 +1,27 @@
+name: Opengrep action tests
+
+# Regression tests for the Opengrep composite action's reporting logic —
+# specifically the stable-identity "new findings" diff in opengrep-report.sh
+# (SEC-1975). Pure bash + jq, no opengrep install needed.
+
+on:
+  pull_request:
+    paths:
+      - 'sast/opengrep/scripts/**'
+      - 'sast/opengrep/action.yml'
+      - 'sast/opengrep/tests/report-diff-test.sh'
+      - '.github/workflows/test-opengrep-action.yml'
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  report-diff-tests:
+    name: opengrep/report-diff-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run report-script diff tests
+        run: bash sast/opengrep/tests/report-diff-test.sh
