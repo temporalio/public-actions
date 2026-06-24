@@ -553,6 +553,10 @@ main() {
   # New findings = head full scan minus baseline full scan, by stable identity.
   local new_json
   new_json=$(mktemp)
+  # Bake the path into the trap now (double quotes): the EXIT trap fires in the
+  # global scope where this local would be unbound under `set -u`.
+  # shellcheck disable=SC2064  # intentional: expand $new_json at definition time
+  trap "rm -f '$new_json'" EXIT
   compute_new_findings "$baseline_json" "$head_json" "$new_json"
 
   local new_count all_count scanned_count

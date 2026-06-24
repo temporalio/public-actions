@@ -80,6 +80,13 @@ expect "second finding same rule+file -> 1 new" 1 1 \
   "$(results_doc "$(finding run.yml 5 'echo a')")" \
   "$(results_doc "$(finding run.yml 5 'echo a')" "$(finding run.yml 50 'echo NEW')")"
 
+# Same-key findings interleaved with another key in the results array must
+# still group correctly (jq's group_by sorts internally; scan output order is
+# not guaranteed). run.yml gains one finding; other.yml is unchanged.
+expect "interleaved same-key findings -> 1 new" 1 1 \
+  "$(results_doc "$(finding run.yml 5 'echo a')" "$(finding other.yml 1 'echo z')")" \
+  "$(results_doc "$(finding run.yml 5 'echo a')" "$(finding other.yml 1 'echo z')" "$(finding run.yml 50 'echo NEW')")"
+
 # Empty baseline (unavailable) -> every head finding is new (conservative).
 expect "empty baseline -> all new" 2 1 \
   '{"results":[],"errors":[],"paths":{}}' \
