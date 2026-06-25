@@ -164,6 +164,9 @@ runs:
             else
               echo "::warning::Baseline scan failed (exit ${base_rc}) — treating all findings as new"
             fi
+            # No-op on the success path (mv consumed it); drops the partial file
+            # a failed/errored scan would otherwise leave behind.
+            rm -f "${RUNNER_TEMP}/baseline-findings.json.tmp"
             git worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
           else
             echo "::warning::Could not create baseline worktree at ${BASELINE_SHA} — treating all findings as new"
