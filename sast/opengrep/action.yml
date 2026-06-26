@@ -93,104 +93,84 @@ runs:
       env:
         BASE_SHA: ${{ inputs.baseline-sha }}
       run: |
-        # Fetch the base commit into the object store.
+        # Fetch the base commit (and its tree) so a worktree can be checked out
+        # at it for the baseline scan. --depth=1 is enough: we full-scan the base
+        # tree, we don't need history or a merge base.
         if ! git fetch --depth=1 origin "$BASE_SHA" 2>/dev/null; then
           echo "::warning::Failed to fetch baseline commit ${BASE_SHA} — all findings will be treated as new"
           echo "available=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
 
-        # --baseline-commit uses git diff --merge-base which requires the
-        # merge base to be reachable. A shallow clone (depth 1) hides the
-        # commit's parents, so deepen by 1 to expose them.
-        git fetch --deepen=1 origin 2>/dev/null || true
-
         echo "available=true" >> "$GITHUB_OUTPUT"
 
-    - name: Differential scan
+    - name: Scan
       shell: bash
       env:
         BASELINE_SHA: ${{ steps.baseline.outputs.available == 'true' && inputs.baseline-sha || '' }}
         ADDITIONAL_CONFIG: ${{ inputs.config }}
       run: |
-        SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
-        if [ -n "$ADDITIONAL_CONFIG" ]; then
-          SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
+        set -uo pipefail
+
+        # We full-scan BOTH the head tree and the base tree with the SAME
+        # ruleset, then diff by stable identity in opengrep-report.sh — instead
+        # of opengrep's --baseline-commit, whose location/content fingerprint
+        # re-reports a pre-existing whole-file finding (e.g. missing-permissions
+        # over a job) as new whenever any line in the file is edited (SEC-1975).
+        RULES_DIR="${GITHUB_ACTION_PATH}/rules/"
+        # Resolve a local additional-config path to absolute so the baseline
+        # scan (run from a worktree in a different cwd) uses the identical rules.
+        if [ -n "$ADDITIONAL_CONFIG" ] && [ -e "$ADDITIONAL_CONFIG" ]; then
+          ADDITIONAL_CONFIG="$(realpath "$ADDITIONAL_CONFIG")"
         fi
-        SCAN_ARGS+=(--json --error)
-        if [ -n "$BASELINE_SHA" ]; then
-          SCAN_ARGS+=(--baseline-commit "$BASELINE_SHA")
-        fi
-        SCAN_ARGS+=(.)
-
-        set +e
-        opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/new-findings.json" 2>"${RUNNER_TEMP}/diff-scan.stderr"
-        exit_code=$?
-        set -e
-
-        # 0 = no new findings, 1 = new findings (with --error), 2+ = scan error.
-        case $exit_code in
-          0|1) ;;
-          *)
-            # --baseline-commit can fail in shallow clones. Fall back to a
-            # non-differential scan so the check still runs (all findings = new).
-            if [ -n "$BASELINE_SHA" ]; then
-              echo "::warning::Differential scan failed (exit ${exit_code}) — retrying without --baseline-commit (all findings will be treated as new)"
-              if [ -s "${RUNNER_TEMP}/diff-scan.stderr" ]; then
-                echo "::group::opengrep scan stderr (differential)"
-                cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
-                echo "::endgroup::"
-              fi
-
-              SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
-              if [ -n "$ADDITIONAL_CONFIG" ]; then
-                SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
-              fi
-              SCAN_ARGS+=(--json --error .)
-
-              set +e
-              opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/new-findings.json" 2>"${RUNNER_TEMP}/diff-scan.stderr"
-              exit_code=$?
-              set -e
-
-              case $exit_code in
-                0|1) ;;
-                *)
-                  echo "::group::opengrep scan stderr"
-                  cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
-                  echo "::endgroup::"
-                  exit "$exit_code"
-                  ;;
-              esac
-            else
-              echo "::group::opengrep scan stderr"
-              cat "${RUNNER_TEMP}/diff-scan.stderr" >&2
-              echo "::endgroup::"
-              exit "$exit_code"
-            fi
-            ;;
-        esac
-
-    - name: Full scan
-      shell: bash
-      env:
-        ADDITIONAL_CONFIG: ${{ inputs.config }}
-      run: |
-        SCAN_ARGS=(scan --no-rewrite-rule-ids --config "${GITHUB_ACTION_PATH}/rules/")
+        # No --error: blocking is decided by the stable-identity diff in the
+        # report step, not by opengrep's exit code. Scanning '.' from each tree's
+        # own root keeps finding paths repo-relative and comparable across trees.
+        SCAN_ARGS=(scan --no-rewrite-rule-ids --config "$RULES_DIR")
         if [ -n "$ADDITIONAL_CONFIG" ]; then
           SCAN_ARGS+=(--config "$ADDITIONAL_CONFIG")
         fi
         SCAN_ARGS+=(--json .)
 
-        set +e
-        opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/all-findings.json" 2>"${RUNNER_TEMP}/full-scan.stderr"
-        exit_code=$?
-        set -e
+        EMPTY='{"results":[],"errors":[],"paths":{"scanned":[]}}'
 
-        # Informational only — warn on errors but don't fail the step.
-        if [ "$exit_code" -ne 0 ]; then
-          echo "::warning::Full scan failed (exit ${exit_code}) — total findings summary may be incomplete"
-          echo '{"results":[],"errors":[],"paths":{"scanned":[]}}' > "${RUNNER_TEMP}/all-findings.json"
+        # ---- Head scan (authoritative: a real scan error fails the job) ----
+        set +e
+        opengrep "${SCAN_ARGS[@]}" > "${RUNNER_TEMP}/head-findings.json" 2>"${RUNNER_TEMP}/head-scan.stderr"
+        head_rc=$?
+        set -e
+        if [ "$head_rc" -gt 1 ] || [ ! -s "${RUNNER_TEMP}/head-findings.json" ]; then
+          echo "::group::opengrep head scan stderr"
+          cat "${RUNNER_TEMP}/head-scan.stderr" >&2 || true
+          echo "::endgroup::"
+          echo "::error::opengrep scan failed (exit ${head_rc})"
+          exit "$([ "$head_rc" -gt 1 ] && echo "$head_rc" || echo 1)"
+        fi
+
+        # ---- Baseline scan (best-effort: any problem -> empty baseline, so
+        #      every head finding counts as new; a baseline issue never hides) -
+        printf '%s\n' "$EMPTY" > "${RUNNER_TEMP}/baseline-findings.json"
+        if [ -n "$BASELINE_SHA" ]; then
+          WORKTREE="${RUNNER_TEMP}/opengrep-baseline"
+          rm -rf "$WORKTREE"
+          if git worktree add --detach --force "$WORKTREE" "$BASELINE_SHA" >/dev/null 2>&1; then
+            set +e
+            ( cd "$WORKTREE" && opengrep "${SCAN_ARGS[@]}" ) \
+              > "${RUNNER_TEMP}/baseline-findings.json.tmp" 2>"${RUNNER_TEMP}/baseline-scan.stderr"
+            base_rc=$?
+            set -e
+            if [ "$base_rc" -le 1 ] && [ -s "${RUNNER_TEMP}/baseline-findings.json.tmp" ]; then
+              mv "${RUNNER_TEMP}/baseline-findings.json.tmp" "${RUNNER_TEMP}/baseline-findings.json"
+            else
+              echo "::warning::Baseline scan failed (exit ${base_rc}) — treating all findings as new"
+            fi
+            # No-op on the success path (mv consumed it); drops the partial file
+            # a failed/errored scan would otherwise leave behind.
+            rm -f "${RUNNER_TEMP}/baseline-findings.json.tmp"
+            git worktree remove --force "$WORKTREE" >/dev/null 2>&1 || true
+          else
+            echo "::warning::Could not create baseline worktree at ${BASELINE_SHA} — treating all findings as new"
+          fi
         fi
 
     - name: Report
@@ -202,9 +182,10 @@ runs:
         PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         PR_COMMENTS_ENABLED: ${{ inputs.pr-comments }}
       run: |
-        # Ensure files exist even if prior steps were skipped.
-        touch "${RUNNER_TEMP}/new-findings.json"
-        touch "${RUNNER_TEMP}/all-findings.json"
+        # Ensure files exist even if prior steps were skipped (missing/empty
+        # baseline => every head finding is treated as new).
+        touch "${RUNNER_TEMP}/baseline-findings.json"
+        touch "${RUNNER_TEMP}/head-findings.json"
         "$GITHUB_ACTION_PATH/scripts/opengrep-report.sh" \
-          "${RUNNER_TEMP}/new-findings.json" \
-          "${RUNNER_TEMP}/all-findings.json"
+          "${RUNNER_TEMP}/baseline-findings.json" \
+          "${RUNNER_TEMP}/head-findings.json"

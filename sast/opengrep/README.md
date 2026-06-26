@@ -1,6 +1,6 @@
 # opengrep
 
-Differential SAST with [Opengrep](https://opengrep.dev) for pull requests. Scans the current branch and compares against the base branch using `--baseline-commit`, **failing only on newly introduced findings**. Pre-existing findings are reported in the job summary but don't block the PR.
+Differential SAST with [Opengrep](https://opengrep.dev) for pull requests. Full-scans both the PR head and the base branch, then **fails only on newly introduced findings** — a finding is "new" only if its `(rule, file)` had fewer findings on the base. Pre-existing findings are reported in the job summary but don't block the PR. Identifying new findings by stable identity rather than by line/content fingerprint means editing a file (e.g. pinning an action SHA) does not re-report a pre-existing whole-file finding such as a missing `permissions:` block.
 
 ## Usage
 
