@@ -1,0 +1,49 @@
+# Regression fixture for `security.gha.run-shell-injection` (ERROR).
+# Annotation syntax (ruleid / ok) is documented in sast/opengrep/tests/README.md.
+# Run via: python3 sast/opengrep/tests/run.py
+on: [issues, pull_request]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      # --- must flag: attacker-controllable github context in run/script ---
+      # ruleid: security.gha.run-shell-injection
+      - run: echo ${{ github.event.pull_request.title }}
+      # ruleid: security.gha.run-shell-injection
+      - run: echo ${{ github.head_ref }}
+      # commit author name is free-text (git config) -> injectable
+      # ruleid: security.gha.run-shell-injection
+      - run: echo ${{ github.event.head_commit.author.name }}
+      # label names are user-controlled -> injectable (and toJson doesn't sanitize)
+      # ruleid: security.gha.run-shell-injection
+      - run: echo "${{ toJSON(github.event.pull_request.labels.*.name) }}"
+      # ruleid: security.gha.run-shell-injection
+      - run: |
+          set -e
+          echo "${{ github.event.issue.body }}"
+      - uses: actions/github-script@v7
+        with:
+          # ruleid: security.gha.run-shell-injection
+          script: console.log("${{ github.event.comment.body }}")
+
+      # bracket property access is valid GHA syntax and equally injectable
+      # ruleid: security.gha.run-shell-injection
+      - run: echo ${{ github.event.issue['body'] }}
+      # ruleid: security.gha.run-shell-injection
+      - run: echo ${{ github['event']['comment']['body'] }}
+
+      # --- must NOT flag ---
+      # ok: security.gha.run-shell-injection
+      - run: echo ${{ github.sha }}
+      # repository / org names are [A-Za-z0-9._-] only -> not shell-injectable
+      # ok: security.gha.run-shell-injection
+      - run: echo ${{ github.event.repository.name }}
+      # base-repo default_branch is write-gated -> advisory (refs rule), not ERROR
+      # ok: security.gha.run-shell-injection
+      - run: ct lint --target-branch ${{ github.event.repository.default_branch }}
+      # ok: security.gha.run-shell-injection
+      - run: echo ${{ github.event.pull_request.base.ref }}
+      # ok: security.gha.run-shell-injection
+      - run: echo "$TITLE"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}

@@ -1,0 +1,56 @@
+# Regression fixture for `security.gha.run-shell-injection-inputs` (WARNING, advisory).
+# Annotation syntax (ruleid / ok) is documented in sast/opengrep/tests/README.md.
+#
+# These cases encode the documented decision on constant-result ternaries:
+# the rule stays STRICT (no per-expression exception), because a sound
+# exclusion is not expressible here and would create false negatives on
+# mixed lines (a safe ternary AND a real injection share one run value).
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+      version-is-repo-ref:
+        type: boolean
+      flag:
+        type: boolean
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      # --- must flag ---
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: echo ${{ inputs.version }}
+      # bracket property access
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: echo ${{ inputs['version'] }}
+      # branch is a CONTEXT value (emitted), not a literal -> dangerous
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: echo "${{ inputs.flag && 'safe' || inputs.version }}"
+      # MIXED: a constant-result ternary AND a real injection on one run value.
+      # This is the false negative a naive exclusion would introduce -> must still flag.
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: echo "${{ inputs.flag && 'a' || 'b' }} and ${{ inputs.version }}"
+      # function emits a context value -> dangerous
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: echo "${{ format('{0}', inputs.version) }}"
+      # constant-result ternary (input only as a condition, both branches literal).
+      # Not exploitable, but STILL flagged (advisory) under the keep-strict decision;
+      # remediation is to hoist the branch into bash (see the ok: case below).
+      # ruleid: security.gha.run-shell-injection-inputs
+      - run: go run . run --version "${{ inputs.version-is-repo-ref && '$(realpath ../x)' || '$INPUT_VERSION' }}"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+
+      # --- must NOT flag ---
+      # github.event.inputs.* is the ERROR rule's job, not this one
+      # ok: security.gha.run-shell-injection-inputs
+      - run: echo ${{ github.event.inputs.version }}
+      # bulletproof remediation: branch hoisted into bash, zero ${{ }} in run text
+      # ok: security.gha.run-shell-injection-inputs
+      - run: |
+          if [ "$USE_REPO_REF" = "true" ]; then v="$(realpath ../x)"; else v="$INPUT_VERSION"; fi
+          go run . run --version "$v"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          USE_REPO_REF: ${{ inputs.version-is-repo-ref }}

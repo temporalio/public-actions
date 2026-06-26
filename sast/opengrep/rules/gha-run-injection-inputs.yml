@@ -1,0 +1,52 @@
+rules:
+  - id: security.gha.run-shell-injection-inputs
+    languages:
+      - yaml
+    severity: WARNING
+    message: >
+      A composite-action / reusable-workflow / `workflow_dispatch` `inputs.*`
+      value is interpolated directly into this `run`/`script` block. Inputs are
+      supplied by the caller, who may pass attacker-controlled data into them —
+      e.g. a caller invoking this with `version: ${{ github.event.pull_request.head.ref }}`
+      (a fork branch name). Because the input value is substituted before the
+      shell runs, the callee cannot trust it. Defensive fix: copy the input into
+      a step-level `env:` entry (e.g. `VERSION: ${{ inputs.version }}`) and
+      reference the quoted environment variable in the script instead
+      (`echo "$VERSION"`). This is advisory (WARNING): not every input carries
+      untrusted data, but routing inputs through `env:` makes the component safe
+      regardless of how callers use it. If an input appears only as a *condition*
+      selecting between hard-coded string literals (e.g.
+      `${{ inputs.flag && 'a' || 'b' }}`), the emitted value is constant and that
+      specific use is not exploitable — but hoist the condition into bash (set a
+      boolean `env:` var and branch with `if`) so the `run` line carries no
+      `${{ }}` and the safety stays local and stable. Directly-untrusted
+      `github.*` contexts are covered separately by
+      `security.gha.run-shell-injection`.
+    paths:
+      include:
+        - .github/workflows/**
+        - "**/action.yml"
+        - "**/action.yaml"
+    patterns:
+      - pattern-either:
+          - pattern: "run: $CMD"
+          - pattern: "script: $CMD"
+      - metavariable-regex:
+          metavariable: $CMD
+          # `inputs.<name>` not preceded by a dot — excludes `github.event.inputs.*`
+          # (the directly-untrusted case handled by the ERROR rule) to avoid double-reporting.
+          # Matches dot and bracket access: `inputs.x`, `inputs['x']`, `inputs["x"]`.
+          regex: (?si).*[^.\w]inputs(?:\.[\w-]+|\[['"][\w-]+['"]\])
+    metadata:
+      source: sast/opengrep/rules/gha-run-injection-inputs.yml
+      category: security
+      cwe:
+        - "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      owasp:
+        - A03:2021 - Injection
+      technology:
+        - github-actions
+      confidence: LOW
+      references:
+        - https://docs.github.com/en/actions/concepts/security/script-injections
+        - https://securitylab.github.com/resources/github-actions-untrusted-input/

@@ -1,5 +1,5 @@
 rules:
-  - id: security.gha.missing-explicit-permissions-temporal
+  - id: security.gha.missing-explicit-permissions
     languages:
       - yaml
     severity: ERROR

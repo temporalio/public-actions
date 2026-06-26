@@ -72,7 +72,10 @@ When a finding's line isn't part of the diff (edge case), the action falls back 
 
 | Rule | Languages | What it detects |
 |---|---|---|
-| `security.gha.missing-explicit-permissions-temporal` | yaml | GitHub Actions workflows without explicit `permissions:` |
+| `security.gha.missing-explicit-permissions` | yaml | GitHub Actions workflows without explicit `permissions:` |
+| `security.gha.run-shell-injection` | yaml | Untrusted `${{ github.* }}` context interpolated into a `run:`/`script:` block (shell injection) |
+| `security.gha.run-shell-injection-inputs` | yaml | _(WARNING)_ Caller-supplied `inputs.*` interpolated into a `run:`/`script:` block — route through `env:` (advisory) |
+| `security.gha.run-shell-injection-refs` | yaml | _(WARNING)_ Non-fork-controlled Git ref (`github.ref`/`base_ref`/`ref_name`/`pull_request.base.ref`) in a `run:`/`script:` block — route through `env:` (advisory) |
 | `security.gha.deprecated.tibdex-github-app-token` | yaml | Deprecated `tibdex/github-app-token` usage |
 | `security.go-zipslip-archive-path-traversal` | go | Unvalidated archive extraction paths (zip slip) |
 

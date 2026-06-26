@@ -1,0 +1,12 @@
+# Regression fixture for `security.gha.deprecated.tibdex-github-app-token`.
+on: push
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      # ruleid: security.gha.deprecated.tibdex-github-app-token
+      - uses: tibdex/github-app-token@v2
+      # ok: security.gha.deprecated.tibdex-github-app-token
+      - uses: actions/create-github-app-token@v2
