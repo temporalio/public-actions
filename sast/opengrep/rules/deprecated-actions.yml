@@ -2,7 +2,11 @@ rules:
   - id: security.gha.deprecated.tibdex-github-app-token
     message: >
       Deprecated action `tibdex/github-app-token` detected. Replace with
-      `actions/create-github-app-token` (first-party).
+      `actions/create-github-app-token` (first-party), pinned to a full
+      40-character commit SHA with a trailing version comment, e.g.
+      `uses: actions/create-github-app-token@<sha> # v2.1.4`. Resolve the pin
+      with `deputy pin --ecosystems github-actions`, which also verifies the
+      SHA is reachable from a real branch upstream.
     severity: WARNING
     languages:
       - yaml
@@ -17,8 +21,12 @@ rules:
       - metavariable-regex:
           metavariable: $ACTION
           regex: ^tibdex/github-app-token(@.*)?$
-    fix: |
-      uses: actions/create-github-app-token@v2
+    # Deliberately no `fix:`. The replacement has to be pinned to a commit SHA
+    # (`security.gha.unpinned-action`), and a rule file cannot resolve one: the
+    # SHA needs a live API lookup plus a branch-reachability check. Hardcoding
+    # one here would go stale silently, since nothing proposes updates to a SHA
+    # embedded in a rule (Dependabot reads workflows, not rules). The `message:`
+    # carries the full remediation instead.
     metadata:
       source: sast/opengrep/rules/deprecated-actions.yml
       category: security
