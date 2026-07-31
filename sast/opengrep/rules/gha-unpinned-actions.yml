@@ -29,8 +29,62 @@ rules:
         - "**/action.yml"
         - "**/action.yaml"
     patterns:
-      - pattern: |
-          uses: $ACTION
+      # `uses` only executes in two places: as a step key, and as a job-level
+      # reusable-workflow call. Anywhere else it is a user-chosen name that
+      # merely reads `uses` (a `with:` input, an `env:` var, a `matrix` entry),
+      # and reporting one would block a PR over a value that never runs.
+      #
+      # Scoped positively, by position, rather than by excluding key names
+      # globally. Excluding names alone is unsound: job ids are user-chosen too,
+      # so a `pattern-not-inside: secrets:` also matches a job *named* `secrets`
+      # and silently drops every unpinned ref in it. That is a real workflow in
+      # this org, and a silent false negative in a security control is worse
+      # than a visible false positive. Anchoring each branch to `steps:` or
+      # `jobs:` first keeps the name exclusions from reaching a whole job.
+      #
+      # The exclusions drop nested keys only, never siblings: an unpinned
+      # `uses:` alongside a `with:` block is still reported, which is by far
+      # the most common real shape.
+      - pattern-either:
+          # A step, in a workflow job or a composite action.
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+              - pattern-inside: |
+                  steps:
+                    ...
+              - pattern-not-inside: |
+                  with:
+                    ...
+              - pattern-not-inside: |
+                  env:
+                    ...
+          # A job-level reusable-workflow call. Inside `jobs:` but not a step;
+          # a job takes arbitrary keys under these five blocks.
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+              - pattern-inside: |
+                  jobs:
+                    ...
+              - pattern-not-inside: |
+                  steps:
+                    ...
+              - pattern-not-inside: |
+                  with:
+                    ...
+              - pattern-not-inside: |
+                  env:
+                    ...
+              - pattern-not-inside: |
+                  secrets:
+                    ...
+              - pattern-not-inside: |
+                  outputs:
+                    ...
+              - pattern-not-inside: |
+                  matrix:
+                    ...
       # Two regexes rather than one: the first says "references a repo at an
       # @ref that is not a 40-hex SHA", the second carves out the excluded
       # prefixes. Both are left-anchored (PCRE2, `re.match` semantics).

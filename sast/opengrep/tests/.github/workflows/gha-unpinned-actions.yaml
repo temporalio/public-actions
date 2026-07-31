@@ -87,6 +87,41 @@ jobs:
       - run: |
           echo "example: uses: dorny/test-reporter@v1"
 
+      # --- `uses` in a non-executable position: a user-chosen key that merely
+      # reads `uses`. The value never runs, so reporting it would block a PR
+      # over nothing. Only nested keys are excluded, never siblings, so the
+      # sibling cases below must still flag.
+      # ok: security.gha.unpinned-action
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          uses: owner/repo@v1
+      # flow-mapping form of the same thing
+      # ok: security.gha.unpinned-action
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with: {uses: owner/repo@v1}
+      # an env var named `uses`
+      # ok: security.gha.unpinned-action
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          uses: owner/repo@v1
+
+      # --- siblings must keep flagging: `uses:` next to a `with:`/`env:` block
+      # is the ordinary shape and by far the most common real finding.
+      # ruleid: security.gha.unpinned-action
+      - uses: dorny/test-reporter@v1
+        with:
+          name: results
+      # ruleid: security.gha.unpinned-action
+      - uses: fgrosse/go-coverage-report@v1
+        env:
+          FOO: bar
+      # `uses:` not first in the step mapping, with a trailing `with:` block
+      - name: upload
+        # ruleid: security.gha.unpinned-action
+        uses: actions/upload-artifact@v4
+        with:
+          path: dist
+
   # --- reusable workflow calls: same trust as an action, same treatment ---
   calls-unpinned:
     # ruleid: security.gha.unpinned-action
@@ -103,3 +138,25 @@ jobs:
   calls-first-party:
     # ok: security.gha.unpinned-action
     uses: temporalio/public-actions/.github/workflows/y.yml@main
+
+  # a reusable-workflow call whose `secrets:`/`with:` blocks contain a key named
+  # `uses`. The call itself flags; the nested keys do not.
+  calls-with-nested-uses-keys:
+    # ruleid: security.gha.unpinned-action
+    uses: owner/repo/.github/workflows/z.yml@main
+    with:
+      uses: owner/repo@v1
+    secrets:
+      uses: owner/repo@v1
+
+  # a matrix `include:` entry with a key named `uses`
+  matrixed:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # ok: security.gha.unpinned-action
+          - uses: owner/repo@v1
+    steps:
+      # ruleid: security.gha.unpinned-action
+      - uses: dorny/test-reporter@v2
