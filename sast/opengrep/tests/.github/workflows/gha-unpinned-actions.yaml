@@ -1,0 +1,105 @@
+# Regression fixture for `security.gha.unpinned-action` (WARNING).
+# Annotation syntax (ruleid / ok) is documented in sast/opengrep/tests/README.md.
+#
+# The rule anchors on the `@ref` portion of a `uses:` value and reports anything
+# that is not a 40-hex commit SHA. Cases below also pin the two behaviours that
+# are invisible by inspection and were verified against opengrep v1.21.0:
+#   1. a quoted scalar binds WITH its quotes, so every regex position tolerates
+#      an optional quote (see the `"actions/upload-artifact@v4"` case);
+#   2. a trailing version comment is not part of the scalar, so the SHA cases
+#      end-anchor cleanly with and without one.
+on: push
+permissions:
+  contents: read
+jobs:
+  steps-level:
+    runs-on: ubuntu-latest
+    steps:
+      # --- must flag ---
+      # tag ref (the drift case from temporalio/temporal-auto-scaled-workers)
+      # ruleid: security.gha.unpinned-action
+      - uses: dorny/test-reporter@v1
+      # ruleid: security.gha.unpinned-action
+      - uses: fgrosse/go-coverage-report@v1
+      # first-party `actions/*` is in scope: GitHub-owned tags are mutable too
+      # ruleid: security.gha.unpinned-action
+      - uses: actions/upload-artifact@v4
+      # branch ref
+      # ruleid: security.gha.unpinned-action
+      - uses: some/action@main
+      # action in a subdirectory of a repo (monorepo layout)
+      # ruleid: security.gha.unpinned-action
+      - uses: github/codeql-action/init@v3
+      # a quoted scalar keeps its quotes in the metavariable, both quote styles
+      # ruleid: security.gha.unpinned-action
+      - uses: "actions/upload-artifact@v4"
+      # ruleid: security.gha.unpinned-action
+      - uses: 'actions/upload-artifact@v4'
+      # a short SHA is not immutable and is not accepted by Actions
+      # ruleid: security.gha.unpinned-action
+      - uses: some/action@abc1234
+      # 39 hex digits: off-by-one on the SHA length must still flag
+      # ruleid: security.gha.unpinned-action
+      - uses: some/action@11bd71901bbe5b1630ceea73d27597364c9af68
+      # inline flow mapping is still a `uses:` key
+      # ruleid: security.gha.unpinned-action
+      - {uses: dorny/test-reporter@v1}
+
+      # --- must NOT flag ---
+      # SHA pin with a trailing version comment (the target end-state)
+      # ok: security.gha.unpinned-action
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # SHA pin without a comment
+      # ok: security.gha.unpinned-action
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      # quoted SHA pin, with and without a comment
+      # ok: security.gha.unpinned-action
+      - uses: "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+      # ok: security.gha.unpinned-action
+      - uses: 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' # v4.2.2
+      # uppercase hex is a valid SHA
+      # ok: security.gha.unpinned-action
+      - uses: actions/checkout@11BD71901BBE5B1630CEEA73D27597364C9AF683
+      # local action: lives in this repo, nothing to pin
+      # ok: security.gha.unpinned-action
+      - uses: ./.github/actions/local
+      # self-repository ref: resolves to the running commit, so pin-equivalent
+      # ok: security.gha.unpinned-action
+      - uses: $/action-dir
+      # container images are a separate ecosystem (pinned by digest)
+      # ok: security.gha.unpinned-action
+      - uses: docker://alpine:3
+      # ok: security.gha.unpinned-action
+      - uses: docker://alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      # temporalio/* is excluded by campaign policy, in every case shape
+      # ok: security.gha.unpinned-action
+      - uses: temporalio/public-actions/sast/opengrep@main
+      # ok: security.gha.unpinned-action
+      - uses: "temporalio/anything@v1"
+      # owner names are case-insensitive on GitHub, so the exclusion is too
+      # ok: security.gha.unpinned-action
+      - uses: Temporalio/anything@v1
+      # a value that merely looks like a ref, under a key that is not `uses:`
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          action: dorny/test-reporter@v1
+      # prose inside a run block must not be parsed as a `uses:` key
+      - run: |
+          echo "example: uses: dorny/test-reporter@v1"
+
+  # --- reusable workflow calls: same trust as an action, same treatment ---
+  calls-unpinned:
+    # ruleid: security.gha.unpinned-action
+    uses: owner/repo/.github/workflows/x.yml@master
+
+  calls-self-repository:
+    # ok: security.gha.unpinned-action
+    uses: $/.github/workflows/reusable.yml
+
+  calls-local:
+    # ok: security.gha.unpinned-action
+    uses: ./.github/workflows/local.yml
+
+  calls-first-party:
+    # ok: security.gha.unpinned-action
+    uses: temporalio/public-actions/.github/workflows/y.yml@main
