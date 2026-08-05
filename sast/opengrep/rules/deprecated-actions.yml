@@ -1,12 +1,17 @@
 rules:
   - id: security.gha.deprecated.tibdex-github-app-token
     message: >
-      Deprecated action `tibdex/github-app-token` detected. Replace with
-      `actions/create-github-app-token` (first-party), pinned to a full
-      40-character commit SHA with a trailing version comment, e.g.
-      `uses: actions/create-github-app-token@<sha> # v2.1.4`. Resolve the pin
-      with `deputy pin --ecosystems github-actions`, which also verifies the
-      SHA is reachable from a real branch upstream.
+      Deprecated action `tibdex/github-app-token` detected. Replace it with the
+      first-party `actions/create-github-app-token`, pinned to a full
+      40-character commit SHA with a trailing version comment:
+      `uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0`.
+      That pin was current and verified fork/imposter-clean when this rule
+      shipped; it is not auto-updated, so run
+      `deputy pin --ecosystems github-actions` to resolve and verify the
+      current one. This is not a drop-in swap: the input names differ, so
+      rename `app_id` to `app-id` and `private_key` to `private-key`
+      (`private-key` is required), and re-map any `permissions:` block to the
+      per-scope `permission-*` inputs.
     severity: WARNING
     languages:
       - yaml
@@ -21,12 +26,15 @@ rules:
       - metavariable-regex:
           metavariable: $ACTION
           regex: ^tibdex/github-app-token(@.*)?$
-    # Deliberately no `fix:`. The replacement has to be pinned to a commit SHA
-    # (`security.gha.unpinned-action`), and a rule file cannot resolve one: the
-    # SHA needs a live API lookup plus a branch-reachability check. Hardcoding
-    # one here would go stale silently, since nothing proposes updates to a SHA
-    # embedded in a rule (Dependabot reads workflows, not rules). The `message:`
-    # carries the full remediation instead.
+    # Deliberately no `fix:`, and not because the SHA is hard to resolve. A
+    # `uses:`-only rewrite is unsound whatever SHA it names: the two actions
+    # take different input names, so the replacement would inherit tibdex's
+    # `app_id`/`private_key` keys, which `actions/create-github-app-token` does
+    # not read (its equivalents are kebab-case, and `private-key` is required).
+    # Every autofixed step would therefore fail to authenticate. Matching the
+    # whole step to rewrite `with:` too is not worth the rule complexity for a
+    # single deprecated action, so `message:` carries the migration recipe plus
+    # a verified pin to copy.
     metadata:
       source: sast/opengrep/rules/deprecated-actions.yml
       category: security
