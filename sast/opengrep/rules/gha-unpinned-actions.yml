@@ -1,0 +1,119 @@
+rules:
+  - id: security.gha.unpinned-action
+    languages:
+      - yaml
+    severity: WARNING
+    message: >
+      Unpinned action reference `$ACTION`: this `uses:` resolves a mutable ref
+      (tag or branch), so the code that runs in CI can change without this line
+      changing. A compromised upstream can repoint the tag and execute arbitrary
+      code with access to this repository's secrets and `GITHUB_TOKEN`
+      (`tj-actions/changed-files`, March 2025). Pin to the full 40-character
+      commit SHA with the resolved version in a trailing comment, e.g.
+      `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`.
+      Prefer `deputy pin --ecosystems github-actions`, which resolves the ref,
+      writes a version comment that reflects the most specific ref actually
+      pointing at that commit, and verifies the SHA is reachable from a real
+      branch upstream. That last check matters: pinning alone does not detect
+      imposter or dangling commits, and this rule only sees the shape of the
+      ref, never its provenance. Reusable workflow calls
+      (`owner/repo/.github/workflows/x.yml@ref`) run with the same trust as
+      actions and are pinned the same way. Not reported, by campaign policy:
+      `temporalio/*` refs (first-party, pinned by internal process), local `./`
+      actions, self-repository `$/` refs (resolve to the running commit, so they
+      are already pin-equivalent), and `docker://` images (pinned by digest as a
+      separate ecosystem).
+    paths:
+      include:
+        - .github/workflows/**
+        - "**/action.yml"
+        - "**/action.yaml"
+    patterns:
+      # `uses` only executes in two places: as a step key, and as a job-level
+      # reusable-workflow call. Anywhere else it is a user-chosen name that
+      # merely reads `uses` (a `with:` input, an `env:` var, a `matrix` entry),
+      # and reporting one would block a PR over a value that never runs.
+      #
+      # Scoped positively, by position, rather than by excluding key names
+      # globally. Excluding names alone is unsound: job ids are user-chosen too,
+      # so a `pattern-not-inside: secrets:` also matches a job *named* `secrets`
+      # and silently drops every unpinned ref in it. That is a real workflow in
+      # this org, and a silent false negative in a security control is worse
+      # than a visible false positive. Anchoring each branch to `steps:` or
+      # `jobs:` first keeps the name exclusions from reaching a whole job.
+      #
+      # The exclusions drop nested keys only, never siblings: an unpinned
+      # `uses:` alongside a `with:` block is still reported, which is by far
+      # the most common real shape.
+      - pattern-either:
+          # A step, in a workflow job or a composite action.
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+              - pattern-inside: |
+                  steps:
+                    ...
+              - pattern-not-inside: |
+                  with:
+                    ...
+              - pattern-not-inside: |
+                  env:
+                    ...
+          # A job-level reusable-workflow call. Inside `jobs:` but not a step;
+          # a job takes arbitrary keys under these five blocks.
+          - patterns:
+              - pattern: |
+                  uses: $ACTION
+              - pattern-inside: |
+                  jobs:
+                    ...
+              - pattern-not-inside: |
+                  steps:
+                    ...
+              - pattern-not-inside: |
+                  with:
+                    ...
+              - pattern-not-inside: |
+                  env:
+                    ...
+              - pattern-not-inside: |
+                  secrets:
+                    ...
+              - pattern-not-inside: |
+                  outputs:
+                    ...
+              - pattern-not-inside: |
+                  matrix:
+                    ...
+      # Two regexes rather than one: the first says "references a repo at an
+      # @ref that is not a 40-hex SHA", the second carves out the excluded
+      # prefixes. Both are left-anchored (PCRE2, `re.match` semantics).
+      #
+      # `["']?` appears in every position because a metavariable bound to a
+      # quoted YAML scalar keeps its quotes (`"actions/checkout@v4"`, verified
+      # against opengrep v1.21.0), and the trailing `# vX.Y.Z` comment is not
+      # part of the scalar, so `@<40-hex>$` is a sound end-anchor.
+      - metavariable-regex:
+          metavariable: $ACTION
+          regex: ^["']?[^@\s"']+@(?![0-9a-fA-F]{40}["']?$)\S+$
+      # The optional quote lives INSIDE the negative lookahead on purpose. With
+      # `^["']?(?!...)` the engine backtracks to the pre-quote position and the
+      # lookahead passes, so `"temporalio/x@v1"` would be reported.
+      - metavariable-regex:
+          metavariable: $ACTION
+          regex: ^(?!["']?(?:\./|\$/|docker://|(?i:temporalio)/))
+    metadata:
+      source: sast/opengrep/rules/gha-unpinned-actions.yml
+      category: security
+      cwe:
+        - "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      owasp:
+        - A08:2021 - Software and Data Integrity Failures
+      technology:
+        - github-actions
+      confidence: HIGH
+      references:
+        - https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions
+        - https://github.com/temporalio/security-models/blob/main/models/supply-chain/security/gha-pipeline-integrity.md#gha-t4-compromised-third-party-action-executes-in-workflow-context
+        - https://github.com/temporalio/security-models/blob/main/models/supply-chain/security/gha-pipeline-integrity.md#gha-t7-imposter-commits-and-dangling-sha-references
+        - https://github.blog/changelog/2026-07-30-reference-same-repository-actions-with-self-repository-syntax/

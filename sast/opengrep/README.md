@@ -76,6 +76,7 @@ When a finding's line isn't part of the diff (edge case), the action falls back 
 | `security.gha.run-shell-injection` | yaml | Untrusted `${{ github.* }}` context interpolated into a `run:`/`script:` block (shell injection) |
 | `security.gha.run-shell-injection-inputs` | yaml | _(WARNING)_ Caller-supplied `inputs.*` interpolated into a `run:`/`script:` block — route through `env:` (advisory) |
 | `security.gha.run-shell-injection-refs` | yaml | _(WARNING)_ Non-fork-controlled Git ref (`github.ref`/`base_ref`/`ref_name`/`pull_request.base.ref`) in a `run:`/`script:` block — route through `env:` (advisory) |
+| `security.gha.unpinned-action` | yaml | _(WARNING)_ `uses:` at a mutable tag/branch ref instead of a full 40-character commit SHA, for actions and reusable workflows alike. Excludes `temporalio/*`, local `./`, self-repository `$/`, and `docker://` refs |
 | `security.gha.deprecated.tibdex-github-app-token` | yaml | Deprecated `tibdex/github-app-token` usage |
 | `security.go-zipslip-archive-path-traversal` | go | Unvalidated archive extraction paths (zip slip) |
 
