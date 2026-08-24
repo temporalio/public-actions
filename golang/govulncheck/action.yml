@@ -4,7 +4,7 @@ inputs:
   govulncheck-version:
     description: 'Version of govulncheck to use'
     required: false
-    default: 'v1.1.4'
+    default: 'v1.7.0'
   base-sha:
     description: >-
       Base branch SHA for differential comparison. Automatically detected on

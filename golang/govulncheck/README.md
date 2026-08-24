@@ -21,7 +21,7 @@ That's it. On `pull_request` and `merge_group` events, `base-sha` is automatical
 
 | Input | Default | Description |
 |---|---|---|
-| `govulncheck-version` | `v1.1.4` | Version of govulncheck to install |
+| `govulncheck-version` | `v1.7.0` | Version of govulncheck to install |
 | `base-sha` | Auto-detected | Base branch SHA for differential comparison. Override to compare against a specific commit. |
 
 ## Outputs

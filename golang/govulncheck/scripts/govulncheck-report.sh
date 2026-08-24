@@ -10,7 +10,7 @@
 #
 # Local testing:
 #   # Generate sample data:
-#   go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -json ./... > /tmp/pr-vulns.json 2>/dev/null || true
+#   go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -json ./... > /tmp/pr-vulns.json 2>/dev/null || true
 #   # Compare two scans:
 #   ./govulncheck-report.sh /tmp/pr-vulns.json /tmp/base-vulns.json
 #
