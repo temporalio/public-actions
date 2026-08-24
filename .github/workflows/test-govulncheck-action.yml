@@ -1,8 +1,9 @@
 name: govulncheck action tests
 
 # Regression tests for the govulncheck composite action's reporting logic —
-# specifically ignore-list parsing and its effect on the new/pre-existing/
-# ignored buckets. Pure bash + jq + awk, no Go toolchain or govulncheck install.
+# ignore-list parsing and the fail-on reachability threshold, and how each
+# affects the new/pre-existing/ignored buckets and the exit code. Pure bash +
+# jq + awk over crafted scan JSON, no Go toolchain or govulncheck install.
 
 on:
   pull_request:
@@ -17,14 +18,17 @@ permissions:
   contents: read
 
 jobs:
-  ignorelist-tests:
-    name: govulncheck/ignorelist-tests
+  report-tests:
+    name: govulncheck/report-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      # Runs under mawk, the default awk on Ubuntu runners. The parser is
-      # written to the common subset of mawk, gawk, and BSD awk, so this is
-      # the coverage that catches an accidental gawk-ism.
+      # Runs under mawk, the default awk on Ubuntu runners. The ignore-file
+      # parser is written to the common subset of mawk, gawk, and BSD awk, so
+      # this is the coverage that catches an accidental gawk-ism.
       - name: Run ignore-list tests
         run: bash golang/govulncheck/tests/ignorelist-test.sh
+
+      - name: Run fail-on threshold tests
+        run: bash golang/govulncheck/tests/fail-on-test.sh

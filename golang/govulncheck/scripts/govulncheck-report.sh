@@ -3,7 +3,14 @@
 # then write a GitHub job summary with the findings.
 #
 # Usage:
-#   govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]
+#   govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file] [fail-on]
+#
+# fail-on selects the lowest govulncheck scan level that may fail the check:
+#   module  (default) any vulnerability in the module graph, reachable or not
+#   package           only if the vulnerable package is imported
+#   symbol            only if your code actually calls the vulnerable symbol
+# Findings below the threshold are still reported, in their own job-summary
+# section, but never block. See extract_ids() for how levels are derived.
 #
 # Environment variables (set automatically by GitHub Actions):
 #   GITHUB_STEP_SUMMARY — path to the job summary file (falls back to stdout)
@@ -74,14 +81,52 @@ validate_format() {
   fi
 }
 
-# Extract unique OSV vulnerability IDs from govulncheck's JSON stream.
-# Reads "finding" objects, which link source code to a vulnerability.
+# Extract unique OSV vulnerability IDs from govulncheck's JSON stream, keeping
+# only those that reach at least the given scan level.
+#
+# govulncheck emits findings at three levels, distinguished by how much of
+# trace[0] is populated (see the Frame docs linked at the top of this file):
+#
+#   1 module   module + version only  — the module is in the build graph
+#   2 package  + package              — the vulnerable package is imported
+#   3 symbol   + function             — your code calls the vulnerable symbol
+#
+# One vulnerability can produce findings at several levels, so each ID is
+# reduced to its highest level before the threshold is applied. Level 3 is what
+# govulncheck's own text output counts under "Your code is affected by"; levels
+# 1 and 2 are what it reports as "your code doesn't appear to call these".
 extract_ids() {
   local json_file=$1
-  jq -r 'select(.finding) | .finding.osv // empty' "$json_file" 2>/dev/null \
+  local min_level=$2
+  jq -r --argjson min "$min_level" -s '
+    [ .[]
+      | select(.finding)
+      | .finding
+      | { osv,
+          level: (
+            if   (.trace[0].function // "") != "" then 3
+            elif (.trace[0].package  // "") != "" then 2
+            else 1
+            end) } ]
+    | group_by(.osv)
+    | map(select((map(.level) | max) >= $min))
+    | .[][0].osv
+  ' "$json_file" 2>/dev/null \
     | sort -u \
     | grep . \
     || true  # grep exits 1 when no matches — don't let set -e kill us
+}
+
+# Translate a fail-on level name into its numeric rank. Exits non-zero on an
+# unrecognized name so a typo fails the job instead of silently picking a
+# threshold nobody intended.
+level_rank() {
+  case "$1" in
+    module)  echo 1 ;;
+    package) echo 2 ;;
+    symbol)  echo 3 ;;
+    *)       return 1 ;;
+  esac
 }
 
 # Count non-empty lines in a string. Returns 0 for empty input.
@@ -275,7 +320,8 @@ diff_vuln_ids() {
 # Render the full GitHub job summary. Reads global state set by main():
 #   NEW_IDS, RESOLVED_IDS, EXISTING_IDS — newline-separated vuln ID lists
 #   IGNORED_ENTRIES — TAB-separated "ID<TAB>reason" lines for suppressed vulns
-#   new_count, resolved_count, existing_count, ignored_count — integer counts
+#   BELOW_IDS — vulns under the fail-on threshold (reported, never blocking)
+#   new_count, resolved_count, existing_count, ignored_count, below_count
 # Falls back to stdout when GITHUB_STEP_SUMMARY is unset (local testing).
 write_summary() {
   local details_file=$1
@@ -331,6 +377,23 @@ write_summary() {
       ignored_table "$IGNORED_ENTRIES" "$details_file"
       echo ""
       echo "</details>"
+      echo ""
+    fi
+
+    if [ "$below_count" -gt 0 ]; then
+      echo "### :information_source: Below the \`${FAIL_ON_LEVEL}\` threshold ($below_count)"
+      echo ""
+      case "$FAIL_ON_LEVEL" in
+        package) echo "Present in the module graph, but the vulnerable package is not imported." ;;
+        symbol)  echo "Present in the build, but your code does not call the vulnerable symbols." ;;
+      esac
+      echo "Reported for visibility; these do not block the PR."
+      echo ""
+      echo "<details><summary>Click to expand</summary>"
+      echo ""
+      vuln_table "$BELOW_IDS" "$details_file"
+      echo ""
+      echo "</details>"
     fi
   } >> "$summary_file"
 }
@@ -344,14 +407,16 @@ write_summary() {
 DETAILS_FILE=$(mktemp)
 trap 'rm -f "$DETAILS_FILE"' EXIT
 
-# Ignore-list state, declared here so write_summary can read it under `set -u`
-# even when no ignore file is in play.
+# Ignore-list and threshold state, declared here so write_summary can read it
+# under `set -u` even when no ignore file or non-default threshold is in play.
 IGNORED_ENTRIES=""
 IGNORE_FILE_PATH=""
+BELOW_IDS=""
+FAIL_ON_LEVEL="module"
 
 # Algorithm:
 #   1. Validate the PR scan output format (warn if protocol changed).
-#   2. Extract vuln IDs from both scans → sorted, unique, newline-separated.
+#   2. Extract vuln IDs at or above the fail-on threshold from both scans.
 #   3. Parse the ignore file (if any) into IDs + reasons.
 #   4. Set-diff the two ID lists → new / resolved / pre-existing.
 #   5. Subtract ignored IDs from every bucket; report them separately.
@@ -359,21 +424,38 @@ IGNORE_FILE_PATH=""
 #   7. Render a GitHub job summary with markdown tables.
 #   8. Expose counts via GITHUB_OUTPUT for downstream workflow steps.
 #   9. Exit 1 if any non-ignored new vulns were introduced; 0 otherwise.
+USAGE="Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file] [fail-on]"
 main() {
-  local pr_json="${1:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]}"
-  local base_json="${2:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]}"
+  local pr_json="${1:?$USAGE}"
+  local base_json="${2:?$USAGE}"
   local ignore_file="${3:-}"
+  FAIL_ON_LEVEL="${4:-module}"
 
   if ! command -v jq &>/dev/null; then
     echo "::error::jq is required but not installed — use a GitHub-hosted runner or install jq"
     exit 1
   fi
 
+  local min_level
+  if ! min_level=$(level_rank "$FAIL_ON_LEVEL"); then
+    echo "::error::invalid fail-on level '${FAIL_ON_LEVEL}' — expected one of: module, package, symbol"
+    exit 1
+  fi
+
   validate_format "$pr_json"
 
-  # Step 2: extract vuln IDs from both scans.
-  PR_IDS=$(extract_ids "$pr_json")
-  BASE_IDS=$(extract_ids "$base_json")
+  # Step 2: extract vuln IDs from both scans, keeping only those at or above
+  # the threshold. Everything below it is still collected so the summary can
+  # report it without blocking.
+  PR_IDS=$(extract_ids "$pr_json" "$min_level")
+  BASE_IDS=$(extract_ids "$base_json" "$min_level")
+
+  # Every ID in the PR scan regardless of level. Used for the below-threshold
+  # section, and so that ignore entries covering a below-threshold finding are
+  # not misreported as stale.
+  local pr_all_ids
+  pr_all_ids=$(extract_ids "$pr_json" 1)
+  BELOW_IDS=$(filter_ids "$pr_all_ids" "$PR_IDS")
 
   # Step 3: parse the ignore file. It is read from the head tree, so a PR can
   # add a suppression and have it apply to itself — required to unblock a PR at
@@ -415,13 +497,16 @@ main() {
     NEW_IDS=$(filter_ids "$NEW_IDS" "$ignored_ids")
     RESOLVED_IDS=$(filter_ids "$RESOLVED_IDS" "$ignored_ids")
     EXISTING_IDS=$(filter_ids "$EXISTING_IDS" "$ignored_ids")
+    # An explicit ignore wins over the threshold classification, so the entry
+    # and its reason are what a reviewer sees rather than a bare listing.
+    BELOW_IDS=$(filter_ids "$BELOW_IDS" "$ignored_ids")
 
-    # Keep only the entries whose ID actually appeared in this scan.
+    # Keep only the entries whose ID actually appeared in this scan, at any level.
     IGNORED_ENTRIES=$(awk -F'\t' 'NR==FNR { present[$0]=1; next } present[$1]' \
-      <(echo "$PR_IDS") <(echo "$ignore_entries") || true)
+      <(echo "$pr_all_ids") <(echo "$ignore_entries") || true)
 
     local stale stale_count
-    stale=$(comm -23 <(echo "$ignored_ids") <(echo "$PR_IDS") | grep . || true)
+    stale=$(comm -23 <(echo "$ignored_ids") <(echo "$pr_all_ids") | grep . || true)
     stale_count=$(count_lines "$stale")
     if [ "$stale_count" -gt 0 ]; then
       echo "::warning::${IGNORE_FILE_PATH} lists ${stale_count} $([ "$stale_count" -eq 1 ] && echo "vulnerability" || echo "vulnerabilities") not present in this scan — consider removing: $(tr '\n' ' ' <<< "$stale")"
@@ -432,6 +517,7 @@ main() {
   resolved_count=$(count_lines "$RESOLVED_IDS")
   existing_count=$(count_lines "$EXISTING_IDS")
   ignored_count=$(count_lines "${IGNORED_ENTRIES:-}")
+  below_count=$(count_lines "$BELOW_IDS")
 
   # Emit an annotation visible in the PR checks summary.
   if [ "$new_count" -gt 0 ]; then
@@ -455,6 +541,7 @@ main() {
     echo "new-count=${new_count}" >> "$GITHUB_OUTPUT"
     echo "has-new-vulns=$([ "$new_count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
     echo "ignored-count=${ignored_count}" >> "$GITHUB_OUTPUT"
+    echo "below-threshold-count=${below_count}" >> "$GITHUB_OUTPUT"
   fi
 
   # Step 9: fail the check when new, non-ignored vulnerabilities are introduced.

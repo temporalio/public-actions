@@ -24,6 +24,7 @@ That's it. On `pull_request` and `merge_group` events, `base-sha` is automatical
 | `govulncheck-version` | `v1.1.4` | Version of govulncheck to install |
 | `base-sha` | Auto-detected | Base branch SHA for differential comparison. Override to compare against a specific commit. |
 | `ignore-file` | `.govulncheck-ignore` if present | Path to a file listing vulnerabilities that must not fail the check. An explicitly set path that does not exist is an error. |
+| `fail-on` | `module` | Lowest scan level that may fail the check: `module`, `package`, or `symbol`. See [Reachability](#reachability). |
 
 ## Outputs
 
@@ -32,6 +33,7 @@ That's it. On `pull_request` and `merge_group` events, `base-sha` is automatical
 | `new-count` | Number of newly introduced vulnerabilities |
 | `has-new-vulns` | `true` if new vulnerabilities were found, `false` otherwise |
 | `ignored-count` | Number of vulnerabilities suppressed by the ignore file |
+| `below-threshold-count` | Number of vulnerabilities reported but below the `fail-on` threshold |
 
 ### Using outputs
 
@@ -42,6 +44,30 @@ That's it. On `pull_request` and `merge_group` events, `base-sha` is automatical
 - if: steps.vulncheck.outputs.has-new-vulns == 'true'
   run: echo "${{ steps.vulncheck.outputs.new-count }} new vulnerabilities found"
 ```
+
+## Reachability
+
+govulncheck reports a vulnerability at one of three levels, depending on how deeply your code touches it:
+
+| Level | Meaning | govulncheck's own wording |
+|---|---|---|
+| `module` | The module is in your build graph | "in modules you require... your code doesn't appear to call these" |
+| `package` | The vulnerable package is imported | "in packages you import" |
+| `symbol` | Your code calls the vulnerable symbol | "Your code is affected by N vulnerabilities" |
+
+By default this action fails on **any** level, including findings govulncheck itself classifies as not affecting your code. `fail-on` narrows that:
+
+```yaml
+- uses: temporalio/public-actions/golang/govulncheck@main
+  with:
+    fail-on: symbol   # only block when your code actually calls the vulnerable symbol
+```
+
+Findings below the threshold don't vanish. They get their own job-summary section so the exposure stays visible, they just don't block.
+
+**When this matters.** [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) covers `golang.org/x/crypto/openpgp` at every version. Repos that only require `golang.org/x/crypto` transitively, without importing `openpgp`, hit a module-level finding with no fix and no reachable code. `fail-on: symbol` resolves it with no ignore entry to maintain.
+
+**Choosing a level.** `symbol` matches what govulncheck's text output treats as actionable, and is the tightest signal-to-noise. It is also the loosest gate: a vulnerability becomes blocking only once something calls it, so a dependency that adds a vulnerable call path in a later release won't be flagged until that path is reachable from your code. `module` is the most conservative and stays the default. Note the analysis is static, so `symbol` can miss reflection- and codegen-driven call paths.
 
 ## Ignoring a vulnerability
 
@@ -72,6 +98,7 @@ The action writes a GitHub job summary with:
 - **Resolved vulnerabilities** — were on the base branch but are now fixed
 - **Pre-existing vulnerabilities** — present on both branches (does not block)
 - **Ignored vulnerabilities** — matched an ignore-file entry, shown with the reason (does not block)
+- **Below the threshold** — reported at a scan level under `fail-on` (does not block)
 
 Each vulnerability links to [pkg.go.dev/vuln](https://pkg.go.dev/vuln/) with the affected module, current version, and fix version.
 
@@ -86,4 +113,7 @@ Reporting logic is covered by pure bash/jq tests that craft scan JSON directly, 
 
 ```bash
 bash golang/govulncheck/tests/ignorelist-test.sh
+bash golang/govulncheck/tests/fail-on-test.sh
 ```
+
+Shared fixtures and assertions live in `tests/lib.sh`.

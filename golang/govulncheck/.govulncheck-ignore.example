@@ -19,11 +19,19 @@
 #   Record why the risk is accepted and what would let you remove the entry.
 #   Reviewers see this text in the job summary, and the action warns when an
 #   entry no longer matches anything so stale suppressions get cleaned up.
+#
+#   Before adding an entry for something your code never calls, consider the
+#   fail-on input instead. `fail-on: symbol` excuses every unreachable finding
+#   at once, with nothing to maintain per vulnerability. Reach for this file
+#   when you need to accept a specific risk, not a whole category.
 
 # golang.org/x/crypto/openpgp is unmaintained upstream with no fixed version,
 # so this can never be resolved by a dependency bump. govulncheck reports it at
 # module level only ("modules you require"), meaning nothing in our build
 # imports the package. Remove once the transitive requirement is gone.
+#
+# An entry is only needed here at fail-on: module. At fail-on: package or
+# symbol this finding is already below the threshold.
 GO-2026-5932
 
 # Reachable, but the affected code path only parses release manifests we
