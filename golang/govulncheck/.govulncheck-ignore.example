@@ -1,0 +1,31 @@
+# Example .govulncheck-ignore
+#
+# Copy this to the root of a Go repository as `.govulncheck-ignore` to stop
+# specific vulnerabilities from failing the govulncheck action. Every other
+# vulnerability keeps failing the check as normal.
+#
+# Format
+#   - One Go vulnerability ID per line: GO-YYYY-NNNN
+#   - Blank lines are skipped
+#   - Everything after '#' is a comment
+#   - The comment block directly above an entry, or a trailing comment on the
+#     entry line, becomes that entry's reason and is shown in the job summary
+#   - A blank line separates a comment block from the entry below it, so a file
+#     header is not mistaken for a justification
+#   - Anything else fails the job: a misparsed ignore file must not silently
+#     weaken the check
+#
+# Guidance
+#   Record why the risk is accepted and what would let you remove the entry.
+#   Reviewers see this text in the job summary, and the action warns when an
+#   entry no longer matches anything so stale suppressions get cleaned up.
+
+# golang.org/x/crypto/openpgp is unmaintained upstream with no fixed version,
+# so this can never be resolved by a dependency bump. govulncheck reports it at
+# module level only ("modules you require"), meaning nothing in our build
+# imports the package. Remove once the transitive requirement is gone.
+GO-2026-5932
+
+# Reachable, but the affected code path only parses release manifests we
+# produce ourselves. Tracked in SEC-1234; drop this once foo/bar v2 lands.
+GO-2025-1234

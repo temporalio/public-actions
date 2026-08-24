@@ -3,7 +3,7 @@
 # then write a GitHub job summary with the findings.
 #
 # Usage:
-#   govulncheck-report.sh <pr-vulns.json> <base-vulns.json>
+#   govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]
 #
 # Environment variables (set automatically by GitHub Actions):
 #   GITHUB_STEP_SUMMARY — path to the job summary file (falls back to stdout)
@@ -13,6 +13,23 @@
 #   go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -json ./... > /tmp/pr-vulns.json 2>/dev/null || true
 #   # Compare two scans:
 #   ./govulncheck-report.sh /tmp/pr-vulns.json /tmp/base-vulns.json
+#
+# Ignore file format (optional third argument, conventionally .govulncheck-ignore):
+#   One Go vulnerability ID per line. Blank lines are skipped. Everything after
+#   a '#' is a comment. A comment block directly above an entry — or a trailing
+#   comment on the entry line — is captured as that entry's reason and rendered
+#   in the job summary, so the "why" travels with the suppression.
+#
+#     # x/crypto/openpgp is unmaintained upstream and has no fix. We only
+#     # require the module transitively; nothing in our build imports it.
+#     GO-2026-5932
+#
+#     GO-2025-1234  # waiting on github.com/foo/bar#42
+#
+#   Ignored IDs never fail the check. They are still listed in the job summary
+#   so a suppression stays visible rather than disappearing. A malformed line is
+#   a hard error: a silently misparsed ignore file would weaken the gate without
+#   anyone noticing.
 #
 # Expected govulncheck JSON format (protocol v1.0.0):
 #   Stream of pretty-printed JSON objects, each with exactly one field populated:
@@ -75,6 +92,69 @@ count_lines() {
   else
     echo "$input" | grep -c .
   fi
+}
+
+# Parse an ignore file into TAB-separated "ID<TAB>reason" lines on stdout.
+# Returns non-zero (after reporting every bad line) if any entry is malformed.
+#
+# Interval expressions and alternation are avoided in the patterns below so the
+# parser behaves identically under mawk (the default awk on Ubuntu runners),
+# gawk, and BSD awk.
+parse_ignorelist() {
+  local ignore_file=$1
+  awk -v file="$ignore_file" '
+    # Tolerate CRLF files authored on Windows.
+    { sub(/\r$/, "") }
+
+    # A blank line ends the current comment block, so a comment paragraph
+    # separated from an entry by whitespace is not mistaken for its reason.
+    /^[ \t]*$/ { pending = ""; next }
+
+    # Whole-line comment: accumulate as the pending reason for the next entry.
+    /^[ \t]*#/ {
+      text = $0
+      sub(/^[ \t]*#[ \t]?/, "", text)
+      pending = (pending == "" ? text : pending " " text)
+      next
+    }
+
+    {
+      line = $0
+      reason = ""
+
+      # A trailing comment on the entry line wins over the block above it.
+      hash = index(line, "#")
+      if (hash > 0) {
+        reason = substr(line, hash + 1)
+        line = substr(line, 1, hash - 1)
+        sub(/^[ \t]+/, "", reason); sub(/[ \t]+$/, "", reason)
+      }
+      sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+
+      if (line !~ /^GO-[0-9][0-9][0-9][0-9]-[0-9]+$/) {
+        printf("::error file=%s,line=%d::malformed ignore entry \"%s\" — expected a Go vulnerability ID such as GO-2026-5932, optionally followed by \"# reason\"\n", file, NR, line) > "/dev/stderr"
+        bad = 1
+        pending = ""
+        next
+      }
+
+      if (reason == "") reason = pending
+      if (reason == "") reason = "(no reason given)"
+      printf("%s\t%s\n", line, reason)
+      pending = ""
+    }
+
+    END { if (bad) exit 1 }
+  ' "$ignore_file"
+}
+
+# Remove ignored IDs from a newline-separated ID list.
+# Both inputs are sorted and unique, so comm -23 is a plain set difference.
+filter_ids() {
+  local ids=$1
+  local ignored=$2
+  [ -z "$ignored" ] && { echo "$ids"; return 0; }
+  comm -23 <(echo "$ids") <(echo "$ignored") | grep . || true
 }
 
 # Build a JSON lookup keyed by vuln ID: { "GO-...": { summary, module, fixed } }
@@ -146,6 +226,31 @@ vuln_table() {
   done <<< "$ids"
 }
 
+# Emit a markdown table for ignored vulns, carrying the reason from the
+# ignore file so reviewers can see the justification without opening it.
+# Input is the TAB-separated "ID<TAB>reason" list produced by parse_ignorelist,
+# already restricted to IDs that actually appear in this scan.
+ignored_table() {
+  local entries=$1
+  local details_file=$2
+  echo "| Vulnerability | Summary | Module | Reason ignored |"
+  echo "|---|---|---|---|"
+  local id reason row
+  while IFS=$'\t' read -r id reason; do
+    [ -n "$id" ] || continue
+    # Escape pipes so a reason containing '|' cannot break the table layout.
+    reason=${reason//|/\\|}
+    row=$(jq -r --arg id "$id" --arg reason "$reason" '
+      .[$id] // null |
+      if .
+      then "[\($id)](https://pkg.go.dev/vuln/\($id)) | \(.summary) | `\(.module)@\(.version)` | \($reason)"
+      else "[\($id)](https://pkg.go.dev/vuln/\($id)) | — | — | \($reason)"
+      end
+    ' "$details_file" 2>/dev/null || echo "[$id](https://pkg.go.dev/vuln/$id) | — | — | ${reason}")
+    echo "| ${row} |"
+  done <<< "$entries"
+}
+
 # ---------------------------------------------------------------------------
 # Diff: compute new / resolved / pre-existing vulnerability sets
 # ---------------------------------------------------------------------------
@@ -169,7 +274,8 @@ diff_vuln_ids() {
 
 # Render the full GitHub job summary. Reads global state set by main():
 #   NEW_IDS, RESOLVED_IDS, EXISTING_IDS — newline-separated vuln ID lists
-#   new_count, resolved_count, existing_count — integer counts
+#   IGNORED_ENTRIES — TAB-separated "ID<TAB>reason" lines for suppressed vulns
+#   new_count, resolved_count, existing_count, ignored_count — integer counts
 # Falls back to stdout when GITHUB_STEP_SUMMARY is unset (local testing).
 write_summary() {
   local details_file=$1
@@ -212,6 +318,19 @@ write_summary() {
       vuln_table "$EXISTING_IDS" "$details_file"
       echo ""
       echo "</details>"
+      echo ""
+    fi
+
+    if [ "$ignored_count" -gt 0 ]; then
+      echo "### :mute: Ignored vulnerabilities ($ignored_count)"
+      echo ""
+      echo "Suppressed by \`${IGNORE_FILE_PATH}\`. These do not block the PR."
+      echo ""
+      echo "<details><summary>Click to expand</summary>"
+      echo ""
+      ignored_table "$IGNORED_ENTRIES" "$details_file"
+      echo ""
+      echo "</details>"
     fi
   } >> "$summary_file"
 }
@@ -225,17 +344,25 @@ write_summary() {
 DETAILS_FILE=$(mktemp)
 trap 'rm -f "$DETAILS_FILE"' EXIT
 
+# Ignore-list state, declared here so write_summary can read it under `set -u`
+# even when no ignore file is in play.
+IGNORED_ENTRIES=""
+IGNORE_FILE_PATH=""
+
 # Algorithm:
 #   1. Validate the PR scan output format (warn if protocol changed).
 #   2. Extract vuln IDs from both scans → sorted, unique, newline-separated.
-#   3. Set-diff the two ID lists → new / resolved / pre-existing.
-#   4. Build a { id → details } JSON lookup for rendering.
-#   5. Render a GitHub job summary with markdown tables.
-#   6. Expose counts via GITHUB_OUTPUT for downstream workflow steps.
-#   7. Exit 1 if any new vulns were introduced; 0 otherwise.
+#   3. Parse the ignore file (if any) into IDs + reasons.
+#   4. Set-diff the two ID lists → new / resolved / pre-existing.
+#   5. Subtract ignored IDs from every bucket; report them separately.
+#   6. Build a { id → details } JSON lookup for rendering.
+#   7. Render a GitHub job summary with markdown tables.
+#   8. Expose counts via GITHUB_OUTPUT for downstream workflow steps.
+#   9. Exit 1 if any non-ignored new vulns were introduced; 0 otherwise.
 main() {
-  local pr_json="${1:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json>}"
-  local base_json="${2:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json>}"
+  local pr_json="${1:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]}"
+  local base_json="${2:?Usage: govulncheck-report.sh <pr-vulns.json> <base-vulns.json> [ignore-file]}"
+  local ignore_file="${3:-}"
 
   if ! command -v jq &>/dev/null; then
     echo "::error::jq is required but not installed — use a GitHub-hosted runner or install jq"
@@ -248,37 +375,89 @@ main() {
   PR_IDS=$(extract_ids "$pr_json")
   BASE_IDS=$(extract_ids "$base_json")
 
-  # Step 3: compute set differences (populates NEW_IDS, RESOLVED_IDS, EXISTING_IDS).
+  # Step 3: parse the ignore file. It is read from the head tree, so a PR can
+  # add a suppression and have it apply to itself — required to unblock a PR at
+  # all. Gate that with CODEOWNERS on the ignore file if review is needed.
+  # A parse failure is fatal: continuing would silently apply a partial list.
+  IGNORE_FILE_PATH=$ignore_file
+  local ignore_entries=""
+  if [ -n "$ignore_file" ]; then
+    if [ ! -f "$ignore_file" ]; then
+      echo "::error::ignore file '${ignore_file}' not found"
+      exit 1
+    fi
+    if ! ignore_entries=$(parse_ignorelist "$ignore_file"); then
+      echo "::error::could not parse ignore file '${ignore_file}' — see the annotations above"
+      exit 1
+    fi
+  fi
+
+  # De-duplicate by ID (first entry wins, so the reason nearest the top of the
+  # file is the one shown), then sort so the IDs can be fed to comm as a set.
+  local ignored_ids=""
+  if [ -n "$ignore_entries" ]; then
+    local dupes
+    dupes=$(cut -f1 <<< "$ignore_entries" | sort | uniq -d | grep . || true)
+    if [ -n "$dupes" ]; then
+      echo "::warning::duplicate entries in ${ignore_file}: $(tr '\n' ' ' <<< "$dupes")"
+    fi
+    ignore_entries=$(awk -F'\t' '!seen[$1]++' <<< "$ignore_entries" | sort -t$'\t' -k1,1)
+    ignored_ids=$(cut -f1 <<< "$ignore_entries")
+  fi
+
+  # Step 4: compute set differences (populates NEW_IDS, RESOLVED_IDS, EXISTING_IDS).
   diff_vuln_ids "$PR_IDS" "$BASE_IDS"
+
+  # Step 5: an ignored ID must not land in any bucket that implies action. Only
+  # entries that actually matched this scan are reported as ignored; the rest
+  # are stale and flagged so the file does not accumulate dead suppressions.
+  if [ -n "$ignored_ids" ]; then
+    NEW_IDS=$(filter_ids "$NEW_IDS" "$ignored_ids")
+    RESOLVED_IDS=$(filter_ids "$RESOLVED_IDS" "$ignored_ids")
+    EXISTING_IDS=$(filter_ids "$EXISTING_IDS" "$ignored_ids")
+
+    # Keep only the entries whose ID actually appeared in this scan.
+    IGNORED_ENTRIES=$(awk -F'\t' 'NR==FNR { present[$0]=1; next } present[$1]' \
+      <(echo "$PR_IDS") <(echo "$ignore_entries") || true)
+
+    local stale stale_count
+    stale=$(comm -23 <(echo "$ignored_ids") <(echo "$PR_IDS") | grep . || true)
+    stale_count=$(count_lines "$stale")
+    if [ "$stale_count" -gt 0 ]; then
+      echo "::warning::${IGNORE_FILE_PATH} lists ${stale_count} $([ "$stale_count" -eq 1 ] && echo "vulnerability" || echo "vulnerabilities") not present in this scan — consider removing: $(tr '\n' ' ' <<< "$stale")"
+    fi
+  fi
 
   new_count=$(count_lines "$NEW_IDS")
   resolved_count=$(count_lines "$RESOLVED_IDS")
   existing_count=$(count_lines "$EXISTING_IDS")
+  ignored_count=$(count_lines "${IGNORED_ENTRIES:-}")
 
   # Emit an annotation visible in the PR checks summary.
   if [ "$new_count" -gt 0 ]; then
     echo "::error::${new_count} new $([ "$new_count" -eq 1 ] && echo "vulnerability" || echo "vulnerabilities") introduced — see job summary for details"
   fi
 
-  # Step 4: build the { id → details } lookup from the PR scan's JSON.
+  # Step 6: build the { id → details } lookup from the PR scan's JSON.
   # Only the PR scan is used here — it has the superset of findings we need
   # details for (new + pre-existing). Resolved vulns get details from the base
   # scan's OSV entries which are also present if the PR still references those
   # modules (even if the finding is gone).
   build_detail_lookup "$pr_json" > "$DETAILS_FILE"
 
-  # Step 5: write the GitHub job summary.
+  # Step 7: write the GitHub job summary.
   # write_summary reads the global counts and ID lists set above.
   write_summary "$DETAILS_FILE"
 
-  # Step 6: expose counts for downstream workflow steps (e.g., conditional notifications).
+  # Step 8: expose counts for downstream workflow steps (e.g., conditional notifications).
   # Gated on GITHUB_OUTPUT so the script still works when run locally.
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     echo "new-count=${new_count}" >> "$GITHUB_OUTPUT"
     echo "has-new-vulns=$([ "$new_count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+    echo "ignored-count=${ignored_count}" >> "$GITHUB_OUTPUT"
   fi
 
-  # Step 7: fail the check when new vulnerabilities are introduced.
+  # Step 9: fail the check when new, non-ignored vulnerabilities are introduced.
   if [ "$new_count" -gt 0 ]; then
     exit 1
   fi
