@@ -1,0 +1,14 @@
+[opengrep]
+description = "Scan the project with OpenGrep and the public-actions rules"
+tools = { opengrep = "1.21.0" }
+run = '''
+set -euo pipefail
+
+rules_dir="${MISE_TASK_DIR}/../../sast/opengrep/rules"
+opengrep scan \
+  --error \
+  --no-rewrite-rule-ids \
+  --config "$rules_dir" \
+  "$@" \
+  "$MISE_PROJECT_ROOT"
+'''
