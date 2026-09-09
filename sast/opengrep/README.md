@@ -12,6 +12,36 @@ steps:
 
 That's it. On `pull_request` and `merge_group` events, `baseline-sha` is automatically detected and the scan is differential. On other events, all findings are treated as new.
 
+## Local scans with Mise
+
+Client repositories can include a shared `mise` "remote task" for local invocation of OpenGrep:
+
+```toml
+[task_config]
+includes = [
+  "git::https://github.com/temporalio/public-actions.git//.mise/tasks/opengrep.toml?ref=main",
+]
+```
+
+Run a strict full-tree scan from anywhere in the client repository:
+
+```bash
+mise run opengrep
+```
+
+Task arguments are forwarded to OpenGrep. For example, a repository can load its own rules in addition to the built-in rules:
+
+```bash
+mise run opengrep --config .opengrep/rules/
+```
+
+Pin `ref` to a release tag or commit SHA when reproducible task and rule versions are preferred. When tracking `main`, use `mise run --no-cache opengrep` to fetch the latest task and rules instead of Mise's cached Git include.
+
+The local task is provided in addition to the GitHub Actions integration which fails only for newly introduced findings, while also providing annotations and optional PR comments.
+
+Note: Setting `task_config.includes` replaces Mise's default task include list. If a client already declares includes, retain its local task directories alongside
+the remote entry (for example, `.mise/tasks`). Remote Git includes use Mise's `git::<protocol>://<repository>//<path>?ref=<ref>` format. See [the Mise documentation for includes](https://mise.jdx.dev/tasks/task-configuration.html#task_config.includes) for the defaults.
+
 ## Inputs
 
 | Input | Default | Description |
