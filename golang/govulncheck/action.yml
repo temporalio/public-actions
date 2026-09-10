@@ -12,6 +12,24 @@ inputs:
       findings are treated as new. Override to compare against a specific commit.
     required: false
     default: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+  ignore-file:
+    description: >-
+      Path to a file listing vulnerability IDs that must not fail the check,
+      one GO-xxxx-xxxx per line, with '#' comments used to record why. When
+      empty, .govulncheck-ignore at the repo root is used if it exists.
+      An explicitly set path that does not exist is an error.
+    required: false
+    default: ''
+  fail-on:
+    description: >-
+      Lowest govulncheck scan level that may fail the check. 'module' (the
+      default) fails on anything in the module graph. 'package' requires the
+      vulnerable package to be imported. 'symbol' requires your code to
+      actually call the vulnerable symbol, matching what govulncheck's own
+      output counts as "Your code is affected by". Findings below the
+      threshold are still reported in the job summary, but never block.
+    required: false
+    default: 'module'
 outputs:
   new-count:
     description: 'Number of newly introduced vulnerabilities'
@@ -19,6 +37,12 @@ outputs:
   has-new-vulns:
     description: 'Whether new vulnerabilities were found (true/false)'
     value: ${{ steps.report.outputs.has-new-vulns }}
+  ignored-count:
+    description: 'Number of vulnerabilities suppressed by the ignore file'
+    value: ${{ steps.report.outputs.ignored-count }}
+  below-threshold-count:
+    description: 'Number of vulnerabilities reported but below the fail-on threshold'
+    value: ${{ steps.report.outputs.below-threshold-count }}
 runs:
   using: "composite"
   steps:
@@ -81,7 +105,24 @@ runs:
     - name: Compare and report
       id: report
       shell: bash
+      env:
+        IGNORE_FILE: ${{ inputs.ignore-file }}
+        FAIL_ON: ${{ inputs.fail-on }}
       run: |
         # Ensure base scan file exists even if the base scan step was skipped or failed.
         touch "${RUNNER_TEMP}/base-vulns.json"
-        "$GITHUB_ACTION_PATH/scripts/govulncheck-report.sh" "${RUNNER_TEMP}/pr-vulns.json" "${RUNNER_TEMP}/base-vulns.json"
+
+        # Resolve the ignore file. An explicitly configured path is passed
+        # through as-is so the report script fails loudly on a typo; the
+        # default is opt-in by convention and silently absent when unused.
+        # Note this reads the head tree — the base scan step restores HEAD
+        # before this runs, so a PR's own ignore entries apply to itself.
+        if [ -z "$IGNORE_FILE" ] && [ -f .govulncheck-ignore ]; then
+          IGNORE_FILE=.govulncheck-ignore
+        fi
+
+        "$GITHUB_ACTION_PATH/scripts/govulncheck-report.sh" \
+          "${RUNNER_TEMP}/pr-vulns.json" \
+          "${RUNNER_TEMP}/base-vulns.json" \
+          "$IGNORE_FILE" \
+          "$FAIL_ON"
