@@ -2,6 +2,8 @@
 
 Fails a pull request whose description still contains template placeholder lines (a whole line wrapped in `_..._`) or leaves a required section empty. Pairs with a `.github/PULL_REQUEST_TEMPLATE.md` whose guidance is written as `_placeholder_` lines.
 
+Adapted from temporalio/temporal's [`check-pr-placeholders.yml`](https://github.com/temporalio/temporal/blob/122ed53e019210326b2dde267fb3c3fe4ab83b2a/.github/workflows/check-pr-placeholders.yml) workflow.
+
 ## Usage
 
 ```yaml
