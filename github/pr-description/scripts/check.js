@@ -1,6 +1,3 @@
-// Adapted from temporalio/temporal's check-pr-placeholders workflow:
-// https://github.com/temporalio/temporal/blob/122ed53e019210326b2dde267fb3c3fe4ab83b2a/.github/workflows/check-pr-placeholders.yml
-
 // Returns the problems found in a pull request description; empty when it passes.
 // Each is { kind: 'placeholder', line, text }, { kind: 'empty-section', header },
 // or { kind: 'missing-section', header } (only with requireSections).
