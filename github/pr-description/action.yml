@@ -14,8 +14,6 @@ inputs:
     description: 'Token used to read the pull request'
     required: false
     default: ${{ github.token }}
-# Adapted from temporalio/temporal's check-pr-placeholders workflow:
-# https://github.com/temporalio/temporal/blob/122ed53e019210326b2dde267fb3c3fe4ab83b2a/.github/workflows/check-pr-placeholders.yml
 runs:
   using: "composite"
   steps:
