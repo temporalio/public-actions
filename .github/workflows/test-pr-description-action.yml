@@ -1,0 +1,24 @@
+name: PR description action tests
+
+# Unit tests for the PR description check in github/pr-description/scripts.
+# Uses Node's built-in test runner, no dependencies to install.
+
+on:
+  pull_request:
+    paths:
+      - 'github/pr-description/**'
+      - '.github/workflows/test-pr-description-action.yml'
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: pr-description/unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Run unit tests
+        run: node --test github/pr-description/tests/*.test.js

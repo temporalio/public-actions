@@ -21,9 +21,12 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         REQUIRED_SECTIONS: ${{ inputs.required-sections }}
+        CHECK_SCRIPT: ${{ github.action_path }}/scripts/check.js
       with:
         github-token: ${{ inputs.github-token }}
         script: |
+          const { findViolations, parseSections } = require(process.env.CHECK_SCRIPT);
+
           // Re-read the PR so a re-run sees the latest description, not the triggering event's.
           const pr = await github.rest.pulls.get({
             owner: context.repo.owner,
@@ -31,36 +34,7 @@ runs:
             pull_number: context.payload.pull_request.number
           });
 
-          const body = pr.data.body || '';
-          const lines = body.split(/\r?\n/);
-
-          let violations = [];
-
-          // Detect placeholder lines: entire line starts and ends with _
-          lines.forEach((line, idx) => {
-            if (/^_.*_$/.test(line.trim())) {
-              violations.push(`Line ${idx + 1}: Placeholder "${line.trim()}"`);
-            }
-          });
-
-          // Detect empty sections: a required header followed by no meaningful content
-          const requiredSections = process.env.REQUIRED_SECTIONS
-            .split(/\r?\n/)
-            .map(s => s.trim())
-            .filter(Boolean);
-          requiredSections.forEach((header) => {
-            const idx = lines.findIndex(line => line.trim().toLowerCase() === header.toLowerCase());
-            if (idx !== -1) {
-              let contentIdx = idx + 1;
-              while (contentIdx < lines.length && lines[contentIdx].trim() === '') {
-                contentIdx++;
-              }
-              const nextLine = lines[contentIdx]?.trim();
-              if (!nextLine || /^## /.test(nextLine)) {
-                violations.push(`Section "${header}" appears to be empty.`);
-              }
-            }
-          });
+          const violations = findViolations(pr.data.body, parseSections(process.env.REQUIRED_SECTIONS));
 
           if (violations.length > 0) {
             console.log("❌ PR description issues found:");
