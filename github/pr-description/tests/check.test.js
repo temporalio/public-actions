@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { findViolations, parseSections } = require('../scripts/check.js');
+const { run, findViolations, parseSections } = require('../scripts/check.js');
 
 const SECTIONS = ['## What changed?', '## Why?', '## How did you test it?'];
 
@@ -70,6 +70,29 @@ test('handles CRLF line endings', () => {
 
 test('passes an empty description', () => {
   assert.deepEqual(findViolations(null, SECTIONS), []);
+});
+
+// Runs the github-script entry point against a fake PR and returns the failure message, if any.
+async function runWith(body, requiredSections) {
+  process.env.REQUIRED_SECTIONS = requiredSections;
+  let failure = null;
+  await run({
+    github: { rest: { pulls: { get: async () => ({ data: { body } }) } } },
+    context: { repo: { owner: 'o', repo: 'r' }, payload: { pull_request: { number: 1 } } },
+    core: { setFailed: msg => { failure = msg; } },
+  });
+  return failure;
+}
+
+test('run fails the step for a bad description', async () => {
+  assert.equal(
+    await runWith('## Why?\n_Tell us._', '## Why?'),
+    'PR description must not contain placeholders or empty sections.',
+  );
+});
+
+test('run passes a good description', async () => {
+  assert.equal(await runWith('## Why?\nBecause.', '## Why?'), null);
 });
 
 test('parses the required-sections input', () => {

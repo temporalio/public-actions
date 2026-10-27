@@ -25,21 +25,4 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          const { findViolations, parseSections } = require(process.env.CHECK_SCRIPT);
-
-          // Re-read the PR so a re-run sees the latest description, not the triggering event's.
-          const pr = await github.rest.pulls.get({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            pull_number: context.payload.pull_request.number
-          });
-
-          const violations = findViolations(pr.data.body, parseSections(process.env.REQUIRED_SECTIONS));
-
-          if (violations.length > 0) {
-            console.log("❌ PR description issues found:");
-            violations.forEach(v => console.log(`- ${v}`));
-            core.setFailed(`PR description must not contain placeholders or empty sections.`);
-          } else {
-            console.log("✅ PR description passed all checks.");
-          }
+          await require(process.env.CHECK_SCRIPT).run({ github, context, core });
