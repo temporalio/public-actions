@@ -1,15 +1,21 @@
 name: 'PR description'
-description: 'Fails when the pull request description still contains template placeholder lines or leaves a required section empty'
+description: 'Fails when the pull request description still contains template placeholder lines or leaves a required section empty (or, optionally, out)'
 inputs:
   required-sections:
     description: >-
       Newline-separated section headings that must have content below them.
-      Matching is case-insensitive; headings missing from the description are ignored.
+      Matching is case-insensitive; headings missing from the description are ignored
+      unless require-sections is true.
     required: false
     default: |
       ## What changed?
       ## Why?
       ## How did you test it?
+  require-sections:
+    description: >-
+      Also fail when a required section is missing, which includes an empty description.
+    required: false
+    default: 'false'
   github-token:
     description: 'Token used to read the pull request'
     required: false
@@ -21,11 +27,15 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         REQUIRED_SECTIONS: ${{ inputs.required-sections }}
+        REQUIRE_SECTIONS: ${{ inputs.require-sections }}
         CHECK_SCRIPT: ${{ github.action_path }}/scripts/check.js
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           await require(process.env.CHECK_SCRIPT).run(
             { github, context, core },
-            { requiredSections: process.env.REQUIRED_SECTIONS },
+            {
+              requiredSections: process.env.REQUIRED_SECTIONS,
+              requireSections: process.env.REQUIRE_SECTIONS,
+            },
           );
