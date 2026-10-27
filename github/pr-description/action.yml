@@ -25,4 +25,7 @@ runs:
       with:
         github-token: ${{ inputs.github-token }}
         script: |
-          await require(process.env.CHECK_SCRIPT).run({ github, context, core });
+          await require(process.env.CHECK_SCRIPT).run(
+            { github, context, core },
+            { requiredSections: process.env.REQUIRED_SECTIONS },
+          );
