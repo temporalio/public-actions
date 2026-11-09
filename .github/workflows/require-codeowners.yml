@@ -1,11 +1,12 @@
 name: Check for CODEOWNERS
 
 on:
-  # Runs on a pull request for the main branch (we use
-  # 'pull_request_target' instead of 'pull_request' so
-  # it also works for forks, since the secrets would
-  # otherwise not be available for forks).
-  pull_request_target:
+  # Runs on a pull request for the main branch. This uses
+  # 'pull_request' rather than 'pull_request_target' because
+  # the check needs no secrets or write access, and GitHub
+  # blocks 'pull_request_target' in public repositories by
+  # default.
+  pull_request:
     types:
       # Default events
       - opened
