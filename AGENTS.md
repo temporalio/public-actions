@@ -8,3 +8,5 @@ Each action lives in `<area>/<name>/` with an `action.yml` and a `README.md`; `s
 - Test the logic as pure functions; keep the I/O at the edge (e.g. GitHub API calls) thin enough to cover with a fake.
 - Pass inputs and event data to scripts through `env`, and read them there.
 - Keep `${{ }}` expressions out of `run:` and `script:` bodies, where they become a script-injection vector.
+- Pin third-party actions to a full 40-character commit SHA with a version comment.
+- Set explicit least-privilege `permissions:` on every workflow.
